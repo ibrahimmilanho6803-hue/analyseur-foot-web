@@ -1,3 +1,31 @@
+# Analyseur Foot Pro — site
+
+Application React (aussi empaquetée pour Android avec Capacitor) qui affiche les pronostics calculés par le serveur
+[analyseur-foot-backend](https://github.com/ibrahimmilanho6803-hue/analyseur-foot-backend).
+
+- **Top Matchs** : les 3 meilleurs matchs à venir, avec la cote combinée *estimée*.
+- **Mon coupon** : saisie de sélections, analyse par le serveur (modèle statistique relu par l'IA), probabilité de chaque sélection et du coupon.
+- **Auto** : le serveur choisit le pari le plus probable de chaque match saisi.
+- **Historique** : coupons enregistrés sur l'appareil (stockage local du navigateur).
+
+Le site ne contient aucune clé secrète et n'appelle jamais l'IA directement : tout passe par le serveur. Si une analyse est
+impossible (équipe inconnue, serveur indisponible…), le site affiche « ? » et la raison, il n'invente jamais de probabilité.
+
+## Configuration
+
+| Variable (au moment de la construction) | Rôle | Défaut |
+|---|---|---|
+| `REACT_APP_API_URL` | Adresse du serveur. | `https://analyseur-foot-api.onrender.com` |
+
+## Tests
+
+```
+npm test            # tests du site (faux serveur, aucun appel réseau)
+CI=true npm run build   # la construction doit passer sans avertissement
+```
+
+---
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
