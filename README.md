@@ -80,6 +80,14 @@ npx cap open android      # ouvre le projet dans Android Studio
 À chaque évolution du site qui doit aussi arriver dans l'application, refaire la construction du site et `npx cap sync android`,
 augmenter `versionCode`, puis republier l'APK.
 
+## Identité visuelle (icônes)
+
+Nom (« Analyseur Foot Pro », « Analyseur Foot » sur l'écran d'accueil), langue, description et couleurs : `public/index.html` et
+`public/manifest.json`. L'icône (cercle central et ballon doré sur le vert de l'écran principal, couleurs de `src/theme.js`) est
+dessinée par `scripts/generer-icones.py` (`pip install pillow`, puis `python3 scripts/generer-icones.py` depuis la racine) : il
+réécrit `public/favicon.ico`, `public/logo192.png`, `public/logo512.png`, ainsi que l'icône et l'écran de démarrage Android
+(`android/app/src/main/res/`). Les fichiers Android gardent les dimensions attendues par Capacitor.
+
 ---
 
 # Getting Started with Create React App
