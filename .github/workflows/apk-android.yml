@@ -1,0 +1,91 @@
+# Construit l'application Android (fichier APK) à partir du dossier mobile/ et la publie sous un lien qui ne change pas :
+#   https://github.com/ibrahimmilanho6803-hue/analyseur-foot-web/releases/download/apk-latest/analyseur-foot-pro.apk
+#
+# - Sur une demande de fusion : tests + construction, l'APK est gardé 30 jours dans « Artifacts » de l'exécution (rien n'est publié).
+# - Sur la branche principale (ou à la main : onglet Actions ▸ « APK Android » ▸ Run workflow) : l'APK remplace celui de la
+#   version « apk-latest » (Releases), téléchargeable par n'importe qui avec le lien.
+# L'APK est signé avec la clé de débogage standard d'Expo : il s'installe et se met à jour sur tous les téléphones (même clé à
+# chaque construction), mais il n'est pas destiné à Google Play (il faudrait alors une clé de publication propre).
+name: APK Android
+
+on:
+  pull_request:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/apk-android.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/apk-android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Tests et APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # seulement pour publier l'APK (dernière étape, branche principale)
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Tests
+        run: npm test -- --ci
+
+      - name: Générer le projet Android
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Numéro de version (augmente à chaque construction)
+        run: sed -i "s/^\(\s*versionCode\) 1$/\1 ${{ github.run_number }}/" android/app/build.gradle && grep -n "versionCode" android/app/build.gradle
+
+      - name: Construire l'APK
+        working-directory: mobile/android
+        run: ./gradlew assembleRelease --no-daemon --console=plain -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+
+      - name: Nommer le fichier
+        run: cp android/app/build/outputs/apk/release/app-release.apk analyseur-foot-pro.apk && ls -l analyseur-foot-pro.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: analyseur-foot-pro-apk
+          path: mobile/analyseur-foot-pro.apk
+          retention-days: 30
+
+      - name: Publier l'APK (lien de téléchargement stable)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="Dernière version de l'application Android (construction n° ${{ github.run_number }}, commit ${GITHUB_SHA::7}, $(date -u +'%d/%m/%Y %H:%M') UTC).
+          Installer : ouvrir le fichier analyseur-foot-pro.apk sur le téléphone et autoriser l'installation depuis cette source si Android le demande."
+          gh release view apk-latest >/dev/null 2>&1 || gh release create apk-latest --title "Application Android (dernière version)" --notes "$NOTES" --target "$GITHUB_SHA"
+          gh release edit apk-latest --notes "$NOTES"
+          gh release upload apk-latest analyseur-foot-pro.apk --clobber

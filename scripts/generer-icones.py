@@ -4,6 +4,8 @@
 Motif original : cercle central et ligne médiane d'un terrain (craie) avec un ballon doré au point de coup d'envoi,
 sur le vert profond de l'écran principal (couleurs de src/theme.js).
 
+Écrit : le site (public/), le projet Android Capacitor (android/) et l'application React Native (mobile/assets/).
+
 Usage (depuis la racine du dépôt) :  python3 scripts/generer-icones.py
 Dépendance : Pillow (pip install pillow).
 """
@@ -29,8 +31,10 @@ def polygone(cx, cy, rayon, angle0, sommets=5):
     ]
 
 
-def motif(n, echelle=1.0, detail=2):
-    """Calque RGBA n×n transparent, motif centré. `echelle` < 1 le rétrécit ; `detail` : 0 simple, 1 pentagone, 2 complet."""
+def motif(n, echelle=1.0, detail=2, mono=False):
+    """Calque RGBA n×n transparent, motif centré. `echelle` < 1 le rétrécit ; `detail` : 0 simple, 1 pentagone, 2 complet.
+    `mono` : silhouette blanche (icône monochrome d'Android 13+) ; les parties sombres deviennent transparentes."""
+    craie, or_, sombre_c = ((255, 255, 255),) * 2 + ((0, 0, 0, 0),) if mono else (CRAIE, OR, FOND + (255,))
     N = n * SUR
     calque = Image.new("RGBA", (N, N), (0, 0, 0, 0))
     d = ImageDraw.Draw(calque)
@@ -41,23 +45,23 @@ def motif(n, echelle=1.0, detail=2):
 
     # Cercle central (trait centré sur le rayon).
     r = 0.30 * u
-    d.ellipse([c - r - trait / 2, c - r - trait / 2, c + r + trait / 2, c + r + trait / 2], fill=CRAIE + (255,))
+    d.ellipse([c - r - trait / 2, c - r - trait / 2, c + r + trait / 2, c + r + trait / 2], fill=craie + (255,))
     d.ellipse([c - r + trait / 2, c - r + trait / 2, c + r - trait / 2, c + r - trait / 2], fill=(0, 0, 0, 0))
     # Ligne médiane, bouts arrondis.
     demi = 0.38 * u
-    d.rectangle([c - demi, c - trait / 2, c + demi, c + trait / 2], fill=CRAIE + (255,))
+    d.rectangle([c - demi, c - trait / 2, c + demi, c + trait / 2], fill=craie + (255,))
     for x in (c - demi, c + demi):
-        d.ellipse([x - trait / 2, c - trait / 2, x + trait / 2, c + trait / 2], fill=CRAIE + (255,))
+        d.ellipse([x - trait / 2, c - trait / 2, x + trait / 2, c + trait / 2], fill=craie + (255,))
 
     # Ballon : léger liseré de la couleur du fond pour le détacher des lignes, puis disque doré.
     rb = (0.20 if petit else 0.15) * u
     halo = rb + (0.024 if petit else 0.020) * u
-    d.ellipse([c - halo, c - halo, c + halo, c + halo], fill=FOND + (255,))
+    d.ellipse([c - halo, c - halo, c + halo, c + halo], fill=sombre_c)
     ballon = Image.new("RGBA", (N, N), (0, 0, 0, 0))
     b = ImageDraw.Draw(ballon)
-    b.ellipse([c - rb, c - rb, c + rb, c + rb], fill=OR + (255,))
+    b.ellipse([c - rb, c - rb, c + rb, c + rb], fill=or_ + (255,))
     if detail >= 1:
-        sombre = FOND + (255,)
+        sombre = sombre_c
         pent = (0.34 if detail == 2 else 0.42) * rb
         b.polygon(polygone(c, c, pent, -90), fill=sombre)
         if detail >= 2:
@@ -71,7 +75,7 @@ def motif(n, echelle=1.0, detail=2):
                 b.polygon(polygone(c + 1.04 * rb * cos, c + 1.04 * rb * sin, 0.34 * rb, ang + 180), fill=sombre)
         # Anneau doré : garde un contour rond net même là où les pentagones du bord touchent le disque.
         anneau = max(1.0, 0.012 * u)
-        b.ellipse([c - rb, c - rb, c + rb, c + rb], outline=OR + (255,), width=max(1, round(anneau)))
+        b.ellipse([c - rb, c - rb, c + rb, c + rb], outline=or_ + (255,), width=max(1, round(anneau)))
     masque = Image.new("L", (N, N), 0)
     ImageDraw.Draw(masque).ellipse([c - rb, c - rb, c + rb, c + rb], fill=255)
     ballon.putalpha(ImageChops.multiply(ballon.getchannel("A"), masque))
@@ -79,7 +83,7 @@ def motif(n, echelle=1.0, detail=2):
     return calque
 
 
-def rendre(n, fond="plein", echelle=1.0, detail=2):
+def rendre(n, fond="plein", echelle=1.0, detail=2, mono=False):
     """Image n×n. fond : « plein » (carré), « arrondi » (carré aux coins arrondis), « rond », « aucun » (transparent)."""
     N = n * SUR
     image = Image.new("RGBA", (N, N), (0, 0, 0, 0))
@@ -93,7 +97,7 @@ def rendre(n, fond="plein", echelle=1.0, detail=2):
             d.ellipse(boite, fill=FOND + (255,))
         else:
             d.rounded_rectangle(boite, radius=0.2 * N, fill=FOND + (255,))
-    image.alpha_composite(motif(n, echelle, detail))
+    image.alpha_composite(motif(n, echelle, detail, mono))
     return image.resize((n, n), Image.LANCZOS)
 
 
@@ -124,6 +128,14 @@ def main():
     tailles = [16, 24, 32, 48, 64]
     images = [rendre(t, "arrondi", 1.0, niveau_de_detail(t)) for t in tailles]
     ecrire("public/favicon.ico", images[-1], format="ICO", sizes=[(t, t) for t in tailles], append_images=images[:-1])
+
+    # --- Application React Native (Expo) -------------------------------------
+    zone_sure = 33 / 108 / 0.38 * 0.98  # même zone sûre que l'icône adaptative Android ci-dessus
+    ecrire("mobile/assets/icon.png", rendre(1024).convert("RGB"), optimize=True)
+    ecrire("mobile/assets/android-icon-foreground.png", rendre(1024, "aucun", zone_sure), optimize=True)
+    ecrire("mobile/assets/android-icon-monochrome.png", rendre(1024, "aucun", zone_sure, 2, True), optimize=True)
+    ecrire("mobile/assets/splash-icon.png", rendre(1024, "aucun"), optimize=True)
+    ecrire("mobile/assets/favicon.png", rendre(48, "arrondi", 1.0, niveau_de_detail(48)), optimize=True)
 
     # --- Android : icône (adaptative, dès Android 8) -------------------------
     # Premier plan 108 dp ; la zone toujours visible est un disque de 66 dp : le motif (rayon 0,38 × échelle) y tient.
