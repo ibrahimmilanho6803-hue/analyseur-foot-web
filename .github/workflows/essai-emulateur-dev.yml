@@ -1,0 +1,68 @@
+# Mise au point de l'essai de l'APK dans un téléphone virtuel (fichier temporaire : il sera intégré à « APK Android » puis supprimé).
+# Reprend l'APK d'une construction déjà réussie au lieu d'en refaire une (gain de 9 minutes par essai).
+name: Essai émulateur (mise au point)
+
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/**"
+      - ".github/workflows/essai-emulateur-dev.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  checks: write
+
+jobs:
+  essai:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Récupérer l'APK d'une construction déjà réussie
+        uses: actions/download-artifact@v8
+        with:
+          name: analyseur-foot-pro-apk
+          path: apk
+          run-id: "38269046850"
+          github-token: ${{ github.token }}
+
+      - name: Activer KVM (accélération matérielle de l'émulateur)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Réveiller le serveur (il s'endort quand personne ne l'utilise)
+        run: |
+          curl -sS -m 150 -o /dev/null -w 'Serveur : HTTP %{http_code} en %{time_total} s\n' https://analyseur-foot-api.onrender.com/api/teams || echo "Serveur injoignable pour l'instant"
+
+      - name: Essai dans un téléphone virtuel Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 3
+          ram-size: 3072M
+          script: python3 .github/scripts/essai_emulateur.py apk/analyseur-foot-pro.apk captures
+
+      - name: Publier les captures (mise au point)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          [ -d captures ] || { echo "pas de captures"; exit 0; }
+          pip install --quiet pillow
+          python3 .github/scripts/publier_captures_dev.py captures
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: essai-emulateur
+          path: captures
+          retention-days: 14
