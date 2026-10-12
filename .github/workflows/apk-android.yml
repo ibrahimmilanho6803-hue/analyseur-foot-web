@@ -85,17 +85,20 @@ jobs:
           VERSION_CODE="$(sed -n "s/^package: .*versionCode='\([^']*\)'.*/\1/p" badging.txt)"
           VERSION_NAME="$(sed -n "s/^package: .*versionName='\([^']*\)'.*/\1/p" badging.txt)"
           LABEL="$(sed -n "s/^application-label:'\(.*\)'$/\1/p" badging.txt)"
-          MIN_SDK="$(sed -n "s/^sdkVersion:'\(.*\)'$/\1/p" badging.txt)"
+          MIN_SDK="$(sed -n "s/^\(minSdkVersion\|sdkVersion\):'\([^']*\)'.*/\2/p" badging.txt | head -1)"
           TARGET_SDK="$(sed -n "s/^targetSdkVersion:'\(.*\)'$/\1/p" badging.txt)"
           PERMS="$(sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" badging.txt | sed 's/^android\.permission\.//' | sort | tr '\n' ' ')"
           ABIS="$(unzip -Z1 "$APK" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u | tr '\n' ' ')"
           SIZE="$(du -h "$APK" | cut -f1)"
           SHA="$(sha256sum "$APK" | cut -d' ' -f1)"
-          CERT="$("${BT}apksigner" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+          "${BT}apksigner" verify --verbose --print-certs "$APK" > signer.txt || { cat signer.txt; echo "::error title=APK invalide::signature invalide"; exit 1; }
+          CERT="$(grep -i 'SHA-256 digest' signer.txt | head -1 | sed 's/^.*: //' || true)"
+          VERIFIED="$(grep -i '^Verified using .*: true$' signer.txt | sed 's/^Verified using //; s/ *(.*$//' | tr '\n' ',' | sed 's/,$//' || true)"
+          [ -n "$CERT" ] || echo "::warning title=APK signature::format de sortie inattendu : $(tr '\n' '|' < signer.txt | head -c 600)"
           echo "::notice title=APK::$LABEL ($PKG), version $VERSION_NAME, versionCode $VERSION_CODE, $SIZE, Android $MIN_SDK à $TARGET_SDK"
           echo "::notice title=APK permissions::$PERMS"
           echo "::notice title=APK architectures::$ABIS"
-          echo "::notice title=APK signature (SHA-256 du certificat)::$CERT"
+          echo "::notice title=APK signature (SHA-256 du certificat)::$CERT (schémas : $VERIFIED)"
           echo "::notice title=APK empreinte (SHA-256 du fichier)::$SHA"
           {
             echo "### APK construit"
@@ -107,7 +110,7 @@ jobs:
             echo "| Android | $MIN_SDK à $TARGET_SDK |"
             echo "| Permissions | $PERMS |"
             echo "| Architectures | $ABIS |"
-            echo "| Signature | \`$CERT\` |"
+            echo "| Signature | \`$CERT\` (schémas : $VERIFIED) |"
             echo "| Empreinte SHA-256 | \`$SHA\` |"
           } >> "$GITHUB_STEP_SUMMARY"
           fail() { echo "::error title=APK invalide::$1"; exit 1; }
@@ -121,7 +124,7 @@ jobs:
             case " $ABIS " in *" $a "*) ;; *) fail "architecture absente : $a ($ABIS)" ;; esac
           done
           unzip -l "$APK" | grep -q "assets/index.android.bundle" || fail "le code JavaScript n'est pas dans l'APK"
-          [ -n "$CERT" ] || fail "signature absente ou invalide"
+          [ -n "$MIN_SDK" ] || fail "version minimale d'Android introuvable dans l'APK"
 
       - uses: actions/upload-artifact@v7
         with:
