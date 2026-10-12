@@ -162,7 +162,7 @@ jobs:
           echo "::notice title=Serveur::$R"
 
       - name: Essai dans un téléphone virtuel Android
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@v2.38.0 # version exacte : une mise à jour de l'outil ne doit pas casser la construction
         with:
           api-level: 34
           target: google_apis
