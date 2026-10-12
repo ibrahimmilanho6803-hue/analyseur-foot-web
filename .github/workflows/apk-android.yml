@@ -1,0 +1,207 @@
+# Construit l'application Android (fichier APK) à partir du dossier mobile/, l'essaie dans un téléphone virtuel, puis la publie
+# sous un lien qui ne change pas :
+#   https://github.com/ibrahimmilanho6803-hue/analyseur-foot-web/releases/download/apk-latest/analyseur-foot-pro.apk
+#
+# Trois étapes (jobs) :
+#   1. « Tests et APK » : tests, construction de l'APK, contrôle du fichier (identifiant, version, permissions, signature).
+#   2. « Essai sur téléphone virtuel » : l'APK est installé dans un émulateur Android, ouvert, parcouru (4 onglets, bouton retour,
+#      enregistrement d'un coupon conservé après redémarrage) et le journal du téléphone est relu. Captures d'écran dans « Artifacts ».
+#   3. « Publier l'APK » : seulement sur la branche principale (ou à la main : onglet Actions ▸ « APK Android » ▸ Run workflow)
+#      et seulement si les deux premières étapes ont réussi : l'APK remplace celui de la version « apk-latest » (Releases).
+# Sur une demande de fusion, l'APK est gardé 30 jours dans « Artifacts » de l'exécution ; rien n'est publié.
+# L'APK est signé avec la clé de débogage standard d'Expo : il s'installe et se met à jour sur tous les téléphones (même clé à
+# chaque construction), mais il n'est pas destiné à Google Play (il faudrait alors une clé de publication propre).
+name: APK Android
+
+on:
+  pull_request:
+    paths:
+      - "mobile/**"
+      - ".github/scripts/**"
+      - ".github/workflows/apk-android.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/scripts/**"
+      - ".github/workflows/apk-android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }} # une publication en cours n'est jamais interrompue
+
+jobs:
+  apk:
+    name: Tests et APK
+    runs-on: ubuntu-24.04 # version fixée : « ubuntu-latest » passe à Ubuntu 26 le 19 octobre 2026
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Tests
+        run: npm test -- --ci --reporters=default --reporters=github-actions # le second rapporteur signale chaque test en échec sur la page de l'exécution
+
+      - name: Générer le projet Android
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Numéro de version (augmente à chaque construction)
+        run: sed -i "s/^\(\s*versionCode\) 1$/\1 ${{ github.run_number }}/" android/app/build.gradle && grep -n "versionCode" android/app/build.gradle
+
+      - name: Construire l'APK
+        working-directory: mobile/android
+        run: ./gradlew assembleRelease --no-daemon --console=plain -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+
+      - name: Nommer le fichier
+        run: cp android/app/build/outputs/apk/release/app-release.apk analyseur-foot-pro.apk && ls -l analyseur-foot-pro.apk
+
+      - name: Contrôler l'APK (identifiant, version, permissions, architectures, signature)
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          APK=analyseur-foot-pro.apk
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)"
+          "${BT}aapt2" dump badging "$APK" > badging.txt
+          PKG="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" badging.txt)"
+          VERSION_CODE="$(sed -n "s/^package: .*versionCode='\([^']*\)'.*/\1/p" badging.txt)"
+          VERSION_NAME="$(sed -n "s/^package: .*versionName='\([^']*\)'.*/\1/p" badging.txt)"
+          LABEL="$(sed -n "s/^application-label:'\(.*\)'$/\1/p" badging.txt)"
+          MIN_SDK="$(sed -n "s/^\(minSdkVersion\|sdkVersion\):'\([^']*\)'.*/\2/p" badging.txt | head -1)"
+          TARGET_SDK="$(sed -n "s/^targetSdkVersion:'\(.*\)'$/\1/p" badging.txt)"
+          PERMS="$(sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p" badging.txt | sed 's/^android\.permission\.//' | sort | tr '\n' ' ')"
+          ABIS="$(unzip -Z1 "$APK" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u | tr '\n' ' ')"
+          SIZE="$(du -h "$APK" | cut -f1)"
+          SHA="$(sha256sum "$APK" | cut -d' ' -f1)"
+          "${BT}apksigner" verify --verbose --print-certs "$APK" > signer.txt || { cat signer.txt; echo "::error title=APK invalide::signature invalide"; exit 1; }
+          CERT="$(grep -i 'SHA-256 digest' signer.txt | head -1 | sed 's/^.*: //' || true)"
+          VERIFIED="$(grep -i '^Verified using .*: true$' signer.txt | sed 's/^Verified using //; s/ *(.*$//' | tr '\n' ',' | sed 's/,$//' || true)"
+          [ -n "$CERT" ] || echo "::warning title=APK signature::format de sortie inattendu : $(tr '\n' '|' < signer.txt | head -c 600)"
+          echo "::notice title=APK::$LABEL ($PKG), version $VERSION_NAME, versionCode $VERSION_CODE, $SIZE, Android $MIN_SDK à $TARGET_SDK"
+          echo "::notice title=APK permissions::$PERMS"
+          echo "::notice title=APK architectures::$ABIS"
+          echo "::notice title=APK signature (SHA-256 du certificat)::$CERT (schémas : $VERIFIED)"
+          echo "::notice title=APK empreinte (SHA-256 du fichier)::$SHA"
+          {
+            echo "### APK construit"
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Application | $LABEL (\`$PKG\`) |"
+            echo "| Version | $VERSION_NAME, versionCode $VERSION_CODE |"
+            echo "| Taille | $SIZE |"
+            echo "| Android | $MIN_SDK à $TARGET_SDK |"
+            echo "| Permissions | $PERMS |"
+            echo "| Architectures | $ABIS |"
+            echo "| Signature | \`$CERT\` (schémas : $VERIFIED) |"
+            echo "| Empreinte SHA-256 | \`$SHA\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          fail() { echo "::error title=APK invalide::$1"; exit 1; }
+          [ "$PKG" = "com.analyseur.footpro" ] || fail "identifiant inattendu : $PKG"
+          [ "$VERSION_CODE" = "$RUN_NUMBER" ] || fail "versionCode inattendu : $VERSION_CODE (attendu $RUN_NUMBER)"
+          case " $PERMS " in *" INTERNET "*) ;; *) fail "permission INTERNET absente ($PERMS)" ;; esac
+          for p in SYSTEM_ALERT_WINDOW READ_EXTERNAL_STORAGE WRITE_EXTERNAL_STORAGE VIBRATE; do
+            case " $PERMS " in *" $p "*) fail "permission non voulue : $p ($PERMS)" ;; esac
+          done
+          for a in arm64-v8a armeabi-v7a; do
+            case " $ABIS " in *" $a "*) ;; *) fail "architecture absente : $a ($ABIS)" ;; esac
+          done
+          unzip -l "$APK" | grep -q "assets/index.android.bundle" || fail "le code JavaScript n'est pas dans l'APK"
+          [ -n "$MIN_SDK" ] || fail "version minimale d'Android introuvable dans l'APK"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: analyseur-foot-pro-apk
+          path: mobile/analyseur-foot-pro.apk
+          retention-days: 30
+
+  essai:
+    name: Essai sur téléphone virtuel
+    needs: apk
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: analyseur-foot-pro-apk
+          path: apk
+
+      - name: Activer KVM (accélération matérielle de l'émulateur)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Réveiller le serveur (il s'endort quand personne ne l'utilise)
+        run: |
+          R="$(curl -sS -m 150 -o /dev/null -w 'HTTP %{http_code} en %{time_total} s' https://analyseur-foot-api.onrender.com/api/teams 2>&1 || true)"
+          echo "::notice title=Serveur::$R"
+
+      - name: Essai dans un téléphone virtuel Android
+        uses: reactivecircus/android-emulator-runner@v2.38.0 # version exacte : une mise à jour de l'outil ne doit pas casser la construction
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 3
+          ram-size: 3072M
+          script: python3 .github/scripts/essai_emulateur.py apk/analyseur-foot-pro.apk captures
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: essai-telephone-virtuel
+          path: captures
+          retention-days: 14
+
+  publier:
+    name: Publier l'APK
+    needs: [apk, essai]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # crée ou met à jour la version « apk-latest »
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: analyseur-foot-pro-apk
+          path: apk
+
+      - name: Publier l'APK (lien de téléchargement stable)
+        working-directory: apk
+        run: |
+          NOTES="Dernière version de l'application Android (construction n° ${{ github.run_number }}, commit ${GITHUB_SHA::7}, $(date -u +'%d/%m/%Y %H:%M') UTC).
+          Installer : ouvrir le fichier analyseur-foot-pro.apk sur le téléphone et autoriser l'installation depuis cette source si Android le demande.
+          Empreinte SHA-256 du fichier : $(sha256sum analyseur-foot-pro.apk | cut -d' ' -f1)"
+          gh release view apk-latest >/dev/null 2>&1 || gh release create apk-latest --title "Application Android (dernière version)" --notes "$NOTES" --target "$GITHUB_SHA"
+          gh release edit apk-latest --notes "$NOTES"
+          gh release upload apk-latest analyseur-foot-pro.apk --clobber
