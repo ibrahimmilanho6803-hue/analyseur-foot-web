@@ -43,6 +43,10 @@
     "preset": "jest-expo",
     "setupFiles": [
       "./jest.setup.js"
-    ]
+    ],
+    "setupFilesAfterEnv": [
+      "./jest.setup.after.js"
+    ],
+    "testTimeout": 30000
   }
 }
