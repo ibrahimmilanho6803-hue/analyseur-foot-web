@@ -11,6 +11,32 @@ Application React (aussi empaquetée pour Android avec Capacitor) qui affiche le
 Le site ne contient aucune clé secrète et n'appelle jamais l'IA directement : tout passe par le serveur. Si une analyse est
 impossible (équipe inconnue, serveur indisponible…), le site affiche « ? » et la raison, il n'invente jamais de probabilité.
 
+## Saisie des clubs : suggestions
+
+Pendant la saisie d'un club (Mon coupon, Auto), le site propose les clubs que le serveur connaît, avec leur championnat. La
+comparaison ignore les accents, les majuscules et la ponctuation, reconnaît les écritures alternatives fournies par la source de
+données (« Man City », « Man Utd »…), les débuts de mots (« man c » → Manchester City) et tolère une faute de frappe quand rien
+d'autre ne correspond. Clavier : ↓ ↑ pour parcourir, Entrée pour choisir, Échap pour fermer. Quand rien ne correspond, un message le
+dit, mais la saisie libre reste possible : le serveur est seul juge de la reconnaissance du nom.
+
+- La liste vient de `GET /api/teams` (serveur à jour requis). Elle est gardée sur l'appareil (clé `coupon-clubs`) : 24 h quand elle
+  est complète, 1 minute seulement tant que des championnats sont encore en chargement sur le serveur ou que le serveur n'a pas répondu.
+- Sans liste (serveur plus ancien, hors ligne, stockage bloqué), les champs restent de simples champs texte et aucune erreur n'est
+  affichée : le site fonctionne comme avant.
+
+## Analyse en deux temps
+
+« Analyser » envoie d'abord la demande au serveur **sans l'IA** (`POST /api/analyze` avec `ia: false`) : le résultat du modèle
+statistique s'affiche en moins d'une seconde, avec un message qui précise que la relecture par l'IA est en cours. Une seconde
+demande (les sélections qui attendent encore la relecture) rapporte ensuite le résultat relu par l'IA, quelques secondes plus tard ;
+les pourcentages peuvent alors bouger de quelques points (le serveur limite la correction de l'IA à 4 points). Si la relecture
+échoue, le résultat du modèle reste affiché et un message l'indique : une probabilité déjà obtenue n'est jamais remplacée par un
+échec. Avec un serveur qui ne connaît pas `ia: false`, aucune sélection n'est marquée `ia.statut = "non_demandee"` : le site saute
+alors la seconde demande.
+
+Les noms **reconnus par le serveur** sont affichés dans la liste et dans l'historique (« PSG » → « Paris SG »), avec le rappel
+« Saisi : … » quand ils s'éloignent de ce qui a été tapé. Deux paris sur le même match sont repérés d'après ces noms.
+
 ## Configuration
 
 | Variable (au moment de la construction) | Rôle | Défaut |
@@ -23,6 +49,36 @@ impossible (équipe inconnue, serveur indisponible…), le site affiche « ? » 
 npm test            # tests du site (faux serveur, aucun appel réseau)
 CI=true npm run build   # la construction doit passer sans avertissement
 ```
+
+## Reconstruire l'application Android
+
+Le projet Android (`android/`, Capacitor 8) **embarque une copie du site** : il n'ouvre pas l'adresse Vercel. Une application installée
+avant une mise à jour du site garde donc l'ancien code tant qu'elle n'est pas reconstruite. Les anciennes versions appelaient la route
+`/api/analyze-simple`, retirée du serveur (elle répond HTTP 410) : elles ne peuvent plus analyser et doivent être reconstruites. Le
+serveur accepte déjà les origines de l'application (`capacitor://localhost`, `https://localhost`, `http://localhost`).
+
+Il faut un ordinateur avec Node 22 ou plus (exigé par Capacitor 8), le JDK 21 et Android Studio (version récente : le projet utilise
+Gradle 8.14 et le plugin Android 8.13 ; SDK 36). Depuis le dossier du site :
+
+```
+npm ci                    # installe exactement les versions de package-lock.json
+CI=true npm run build     # construit le site dans build/ (REACT_APP_API_URL=… seulement si le serveur change d'adresse)
+npx cap sync android      # copie build/ dans le projet Android et met à jour les modules Capacitor
+npx cap open android      # ouvre le projet dans Android Studio
+```
+
+1. Avant de construire, augmenter `versionCode` (nombre entier : 1 → 2 → …) et `versionName` (par exemple « 1.1 ») dans
+   `android/app/build.gradle`.
+2. Dans Android Studio : **Build ▸ Generate Signed App Bundle / APK**, puis installer l'APK sur le téléphone (ou envoyer le bundle
+   sur Google Play si l'application y est publiée).
+3. Pour **remplacer** l'application déjà installée sans la désinstaller, le nouvel APK doit être signé avec **la même clé** que
+   l'ancien et avoir un `versionCode` plus élevé. Désinstaller d'abord peut effacer l'historique enregistré sur le téléphone
+   (il est gardé dans le stockage local de l'application).
+4. La clé de signature (fichier `.jks` ou `.keystore`, et ses mots de passe) ne doit jamais être ajoutée au dépôt, qui est public :
+   `.gitignore` bloque ces fichiers par précaution. Gardez-en une copie en lieu sûr : sans elle, une mise à jour en place est impossible.
+
+À chaque évolution du site qui doit aussi arriver dans l'application, refaire la construction du site et `npx cap sync android`,
+augmenter `versionCode`, puis republier l'APK.
 
 ---
 

@@ -1,5 +1,8 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Plus, Trash2, Check, X, AlertTriangle, TrendingUp, Zap, Star } from "lucide-react";
+import TeamInput from "./TeamInput";
+import { T, inputStyle } from "./theme";
+import { buildIndex, canon } from "./suggest";
 
 // Types de paris reconnus par le serveur (mêmes libellés que l'API). « Autre » sert seulement à l'historique.
 const TYPES_PARI = [
@@ -38,12 +41,6 @@ const TYPES_PARI = [
   "Score exact",
   "Autre",
 ];
-
-const T = {
-  bgDeep: "#0B1F16", surface: "#132A1F", line: "#1F3D2C",
-  chalk: "#E9ECE3", chalkDim: "#8FA396", gold: "#D4A72C",
-  win: "#4C9A6B", loss: "#C1503A",
-};
 
 // Probabilités moyennes d'un match de championnat : utilisées seulement tant qu'aucune analyse n'a été faite.
 const BASELINE_RATES = {
@@ -98,6 +95,11 @@ export function toEstimate(r) {
   if (r.etat === "ok" && typeof r.probabilite === "number") {
     return {
       p: Math.min(0.99, Math.max(0.01, r.probabilite / 100)),
+      // Noms reconnus par le serveur (« PSG » → « Paris SG »), championnat et date du match si le serveur les connaît.
+      equipe1: r.equipe1,
+      equipe2: r.equipe2,
+      competition: r.competition,
+      date: r.date,
       reason: r.justification,
       vigilance: r.vigilance,
       confidence: r.niveauConfiance,
@@ -126,7 +128,15 @@ function formatDate(iso) {
 
 // Clé d'un match (sans accents ni majuscules) : sert à repérer deux paris sur le même match.
 const normName = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-const matchKey = (sel) => normName(sel.equipe1) + "|" + normName(sel.equipe2);
+// Avec une analyse, ce sont les noms reconnus par le serveur qui comptent : « PSG – OM » et « Paris SG – Marseille » sont le même match.
+const matchKey = (sel, est) => normName((est && est.equipe1) || sel.equipe1) + "|" + normName((est && est.equipe2) || sel.equipe2);
+
+// Le nom reconnu mérite d'être signalé quand il ne ressemble pas à la saisie (« PSG » → « Paris SG »), pas pour « Arsenal » → « Arsenal FC ».
+function nameDiffers(typed, recognized) {
+  const a = canon(typed);
+  const b = canon(recognized);
+  return Boolean(a && b) && a !== b && !a.includes(b) && !b.includes(a);
+}
 
 const CONFIDENCE_LABEL = { faible: "faible", moyen: "moyenne", eleve: "élevée" };
 const confidenceLabel = (c) => CONFIDENCE_LABEL[c] || c || "—";
@@ -140,6 +150,55 @@ function useStore() {
   }, []);
   const persist = async (next) => { setPronostics(next); try { localStorage.setItem("coupon-pronostics", JSON.stringify(next)); } catch (e) {} };
   return { pronostics, persist, loading };
+}
+
+// ---------- Liste des clubs pour les suggestions de saisie ----------
+const CATALOG_KEY = "coupon-clubs";
+const CATALOG_TTL_MS = 24 * 3600000; // liste complète : redemandée au plus une fois par jour
+const CATALOG_RETRY_MS = 60000; // liste incomplète (championnats en chargement) ou serveur injoignable : un essai par minute au plus
+
+function savedCatalog() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CATALOG_KEY));
+    if (saved && Number.isFinite(saved.at) && saved.data && Array.isArray(saved.data.equipes)) return saved;
+  } catch (e) {}
+  return null;
+}
+
+// Charge GET /api/teams (gardé sur l'appareil) pour proposer des clubs pendant la saisie. Aucune erreur n'est affichée : sans liste,
+// les champs restent de simples champs texte et le serveur reconnaît le nom saisi comme avant.
+export function useTeamCatalog() {
+  const [state, setState] = useState(() => {
+    const saved = savedCatalog();
+    return saved ? { index: buildIndex(saved.data), complete: Boolean(saved.data.complet), at: saved.at } : { index: null, complete: false, at: 0 };
+  });
+  const latest = useRef(state);
+  latest.current = state;
+  const busy = useRef(false);
+  const lastTry = useRef(0);
+
+  const refresh = useCallback(async () => {
+    const cur = latest.current;
+    const age = Date.now() - cur.at;
+    const stale = !cur.index || age > (cur.complete ? CATALOG_TTL_MS : CATALOG_RETRY_MS);
+    if (!stale || busy.current || (lastTry.current && Date.now() - lastTry.current < CATALOG_RETRY_MS)) return;
+    busy.current = true;
+    lastTry.current = Date.now();
+    try {
+      const data = await callApi("/api/teams", { timeoutMs: 20000 });
+      if (!data || !Array.isArray(data.equipes)) return;
+      const at = Date.now();
+      setState({ index: buildIndex(data), complete: Boolean(data.complet), at });
+      try { localStorage.setItem(CATALOG_KEY, JSON.stringify({ at, data })); } catch (e) {}
+    } catch (e) {
+      // silencieux : voir plus haut
+    } finally {
+      busy.current = false;
+    }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+  return { index: state.index, complete: state.complete, refresh };
 }
 
 // Libellés d'anciennes versions : l'historique déjà enregistré continue de compter.
@@ -176,11 +235,27 @@ export function estimatesForChunk(chunk, results) {
   return { next, iaDown };
 }
 
+// Une sélection attend la relecture de l'IA quand le serveur n'a répondu qu'avec le modèle statistique (demande avec ia: false).
+export const awaitsReview = (r) => Boolean(r && r.etat === "ok" && r.ia && r.ia.statut === "non_demandee");
+
+// Fusionne les estimations de la relecture dans celles déjà affichées, sans jamais remplacer une probabilité par un échec.
+export function mergeEstimates(prev, next) {
+  const out = { ...prev };
+  for (const [id, est] of Object.entries(next)) {
+    if (typeof est.p === "number" || !(prev[id] && typeof prev[id].p === "number")) out[id] = est;
+  }
+  return out;
+}
+
 // Estimation d'un match du « Top Matchs » (déjà analysé par le serveur).
 export function fromTopMatch(m) {
   if (!m || typeof m.probabilite !== "number") return { p: null, message: "Probabilité indisponible pour ce match." };
   return {
     p: clampP(m.probabilite / 100),
+    equipe1: m.homeTeam,
+    equipe2: m.awayTeam,
+    competition: m.competition,
+    date: m.date,
     reason: m.justification,
     vigilance: m.vigilance,
     confidence: m.niveauConfiance,
@@ -194,12 +269,14 @@ export function fromTopMatch(m) {
 
 export default function App() {
   const { pronostics, persist, loading } = useStore();
+  const catalog = useTeamCatalog();
   const [draft, setDraft] = useState([]);
   const [form, setForm] = useState({ equipe1: "", equipe2: "", typePari: TYPES_PARI[0], cote: "", matchDate: todayISO() });
   const [aiEstimates, setAiEstimates] = useState({});
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState(null);
   const [aiNotice, setAiNotice] = useState(null);
+  const [aiPhase, setAiPhase] = useState(null); // "modele" : calcul du modèle ; "ia" : modèle affiché, relecture par l'IA en cours
   const [matchesToGenerate, setMatchesToGenerate] = useState([]);
   const [genForm, setGenForm] = useState({ equipe1: "", equipe2: "", matchDate: todayISO() });
   const [genLoading, setGenLoading] = useState(false);
@@ -238,7 +315,7 @@ export default function App() {
     const combinedWithout = withoutWeakest.length > 0 ? withoutWeakest.reduce((acc, e) => acc * e.p, 1) : null;
     // pending : sélections sans analyse chiffrée du serveur (le pourcentage affiché n'est alors qu'indicatif).
     const pending = evals.filter((e) => e.source !== "analyse").length;
-    const keys = draft.map(matchKey);
+    const keys = draft.map((sel) => matchKey(sel, aiEstimates[sel.id]));
     const sameMatch = new Set(keys).size < keys.length;
     return { evals, combined, weakest, combinedWithout, pending, sameMatch };
   }, [draft, pronostics, aiEstimates]);
@@ -249,28 +326,50 @@ export default function App() {
     setForm({ ...form, equipe1: "", equipe2: "", cote: "" });
   };
 
-  // Analyse du coupon par le serveur (modèle statistique + relecture IA). Aucune probabilité n'est inventée côté site.
+  // Analyse du coupon par le serveur, en deux temps : le modèle statistique répond en une fraction de seconde et s'affiche tout de
+  // suite ; la relecture par l'IA (quelques secondes) vient ensuite l'ajuster de quelques points. Si elle échoue, le résultat du
+  // modèle reste affiché. Aucune probabilité n'est inventée côté site.
   const analyzeWithAI = async () => {
     if (draft.length === 0 || aiLoading) return;
-    setAiLoading(true); setAiError(null); setAiNotice(null);
+    setAiLoading(true); setAiError(null); setAiNotice(null); setAiPhase("modele");
+    const legsOf = (list) => list.map((s) => ({ equipe1: s.equipe1, equipe2: s.equipe2, typePari: s.typePari }));
+    const chunksOf = (list) => {
+      const out = [];
+      for (let i = 0; i < list.length; i += MAX_LEGS_PER_CALL) out.push(list.slice(i, i + MAX_LEGS_PER_CALL));
+      return out;
+    };
     let unavailable = 0;
+    let reviewError = null;
     try {
-      for (let i = 0; i < draft.length; i += MAX_LEGS_PER_CALL) {
-        const chunk = draft.slice(i, i + MAX_LEGS_PER_CALL);
-        const res = await callApi("/api/analyze", {
-          method: "POST",
-          timeoutMs: 100000,
-          body: { legs: chunk.map((s) => ({ equipe1: s.equipe1, equipe2: s.equipe2, typePari: s.typePari })) },
-        });
-        const { next, iaDown } = estimatesForChunk(chunk, res && res.legs);
+      const toReview = [];
+      for (const chunk of chunksOf(draft)) {
+        const res = await callApi("/api/analyze", { method: "POST", timeoutMs: 100000, body: { ia: false, legs: legsOf(chunk) } });
+        const list = Array.isArray(res && res.legs) ? res.legs : [];
+        const { next, iaDown } = estimatesForChunk(chunk, list);
         unavailable += iaDown;
         setAiEstimates((prev) => ({ ...prev, ...next }));
+        chunk.forEach((sel, k) => { if (awaitsReview(list[k])) toReview.push(sel); });
       }
-      if (unavailable > 0) setAiNotice("La relecture par l'IA était indisponible pour " + (unavailable > 1 ? "certaines sélections" : "une sélection") + " : le modèle statistique répond seul.");
+      // Un serveur qui répond déjà avec l'IA (ancienne version) n'a rien à relancer.
+      if (toReview.length > 0) {
+        setAiPhase("ia");
+        for (const chunk of chunksOf(toReview)) {
+          try {
+            const res = await callApi("/api/analyze", { method: "POST", timeoutMs: 100000, body: { legs: legsOf(chunk) } });
+            const { next, iaDown } = estimatesForChunk(chunk, res && res.legs);
+            unavailable += iaDown;
+            setAiEstimates((prev) => mergeEstimates(prev, next));
+          } catch (e) {
+            reviewError = e;
+          }
+        }
+      }
+      if (reviewError) setAiNotice("La relecture par l'IA n'a pas pu être faite (" + reviewError.message + ") : le modèle statistique répond seul.");
+      else if (unavailable > 0) setAiNotice("La relecture par l'IA était indisponible pour " + (unavailable > 1 ? "certaines sélections" : "une sélection") + " : le modèle statistique répond seul.");
     } catch (e) {
       setAiError("Analyse impossible : " + e.message);
     } finally {
-      setAiLoading(false);
+      setAiLoading(false); setAiPhase(null);
     }
   };
 
@@ -367,8 +466,9 @@ export default function App() {
   const saveCoupon = async () => {
     if (draft.length === 0) return;
     const couponId = uid();
+    // L'historique garde les noms reconnus par le serveur quand il y a eu une analyse (« Paris SG » plutôt que « PSG »).
     const entries = draft.map((s) => ({
-      id: uid(), couponId, equipe1: s.equipe1, equipe2: s.equipe2, typePari: s.typePari,
+      id: uid(), couponId, equipe1: (aiEstimates[s.id] && aiEstimates[s.id].equipe1) || s.equipe1, equipe2: (aiEstimates[s.id] && aiEstimates[s.id].equipe2) || s.equipe2, typePari: s.typePari,
       cote: s.cote ? parseFloat(s.cote) : null, matchDate: s.matchDate || todayISO(), statut: "en_attente", date: new Date().toISOString(),
     }));
     await persist([...entries, ...pronostics]);
@@ -493,12 +593,18 @@ export default function App() {
                 const ev = analysis?.evals.find((e) => e.sel.id === sel.id);
                 const aiData = aiEstimates[sel.id];
                 const detailed = aiData && typeof aiData.p === "number";
+                // Noms reconnus par le serveur, si le pari a été analysé ; la saisie d'origine est rappelée quand elle en est éloignée.
+                const name1 = (detailed && aiData.equipe1) || sel.equipe1;
+                const name2 = (detailed && aiData.equipe2) || sel.equipe2;
+                const typedDiffers = detailed && (nameDiffers(sel.equipe1, name1) || nameDiffers(sel.equipe2, name2));
                 return (
                   <div key={sel.id} style={{ border: `1px solid ${T.line}`, borderRadius: 8, padding: "10px", marginBottom: 6 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div style={{ flex: 1, fontSize: 13 }}>
-                        <b>{sel.equipe1} vs {sel.equipe2}</b>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
+                        <b>{name1} vs {name2}</b>
                         <div style={{ color: T.chalkDim, fontSize: 12 }}>{sel.typePari}</div>
+                        {detailed && (aiData.competition || aiData.date) && <div style={{ color: T.chalkDim, fontSize: 10 }}>{[aiData.competition, formatDate(aiData.date)].filter(Boolean).join(" · ")}</div>}
+                        {typedDiffers && <div style={{ color: T.chalkDim, fontSize: 10 }}>Saisi : {sel.equipe1} – {sel.equipe2}</div>}
                         {ev && !ev.failed && ev.source === "historique" && <div style={{ color: T.chalkDim, fontSize: 10 }}>Estimation d'après votre historique ({ev.n} paris), pas encore analysé</div>}
                         {ev && !ev.failed && ev.source === "general" && <div style={{ color: T.chalkDim, fontSize: 10 }}>Moyenne générale de ce pari, pas encore analysé</div>}
                       </div>
@@ -532,14 +638,14 @@ export default function App() {
                     )}
                     {aiData?.homeAway1?.home && showDetails && (
                       <div style={{ marginTop: 6, padding: 6, background: T.bgDeep, borderRadius: 4, fontSize: 11 }}>
-                        <div style={{ color: T.gold, fontWeight: 600, marginBottom: 3 }}>{sel.equipe1} à domicile :</div>
+                        <div style={{ color: T.gold, fontWeight: 600, marginBottom: 3 }}>{name1} à domicile :</div>
                         <div style={{ color: T.chalkDim }}>{aiData.homeAway1.home.won}V/{aiData.homeAway1.home.draw}N/{aiData.homeAway1.home.lost}D - {aiData.homeAway1.home.goalsFor} buts / {aiData.homeAway1.home.goalsAgainst} encaissés</div>
                         <div style={{ color: T.chalkDim, fontSize: 10 }}>Moy : {aiData.homeAway1.home.avgGoalsFor} buts marqués/match</div>
                       </div>
                     )}
                     {aiData?.homeAway2?.away && showDetails && (
                       <div style={{ marginTop: 4, padding: 6, background: T.bgDeep, borderRadius: 4, fontSize: 11 }}>
-                        <div style={{ color: T.gold, fontWeight: 600, marginBottom: 3 }}>{sel.equipe2} à l'extérieur :</div>
+                        <div style={{ color: T.gold, fontWeight: 600, marginBottom: 3 }}>{name2} à l'extérieur :</div>
                         <div style={{ color: T.chalkDim }}>{aiData.homeAway2.away.won}V/{aiData.homeAway2.away.draw}N/{aiData.homeAway2.away.lost}D - {aiData.homeAway2.away.goalsFor} buts / {aiData.homeAway2.away.goalsAgainst} encaissés</div>
                         <div style={{ color: T.chalkDim, fontSize: 10 }}>Moy : {aiData.homeAway2.away.avgGoalsFor} buts marqués/match</div>
                       </div>
@@ -574,7 +680,7 @@ export default function App() {
                       <TrendingUp size={14}/> {aiLoading ? "Analyse…" : "Analyser"}
                     </button>
                   </div>
-                  {aiLoading && <div style={{ color: T.chalkDim, fontSize: 11, marginTop: 6 }}>Analyse en cours : jusqu'à une minute pour un grand coupon.</div>}
+                  {aiLoading && <div style={{ color: T.chalkDim, fontSize: 11, marginTop: 6 }}>{aiPhase === "ia" ? "Résultat du modèle statistique affiché : la relecture par l'IA est en cours (quelques secondes), les pourcentages peuvent bouger de quelques points." : "Analyse en cours : jusqu'à une minute pour un grand coupon."}</div>}
                   {aiNotice && <div style={noteStyle(T.gold)}><AlertTriangle size={14} style={{ flexShrink: 0 }}/><span>{aiNotice}</span></div>}
                   {aiError && <div style={{ color: T.loss, fontSize: 11, marginTop: 6 }}>{aiError}</div>}
                 </div>
@@ -585,9 +691,9 @@ export default function App() {
           <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 10, padding: 14, marginBottom: 12 }}>
             <div style={sectionTitle}>Ajouter un match</div>
             <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-              <input aria-label="Équipe 1 (à domicile)" placeholder="Équipe 1" value={form.equipe1} onChange={(e) => setForm({ ...form, equipe1: e.target.value })} style={inputStyle()} />
+              <TeamInput label="Équipe 1 (à domicile)" placeholder="Équipe 1" value={form.equipe1} onChange={(v) => setForm((f) => ({ ...f, equipe1: v }))} index={catalog.index} complete={catalog.complete} onFocus={catalog.refresh} />
               <span style={{ color: T.chalkDim, fontWeight: 600 }}>VS</span>
-              <input aria-label="Équipe 2 (à l'extérieur)" placeholder="Équipe 2" value={form.equipe2} onChange={(e) => setForm({ ...form, equipe2: e.target.value })} style={inputStyle()} />
+              <TeamInput label="Équipe 2 (à l'extérieur)" placeholder="Équipe 2" value={form.equipe2} onChange={(v) => setForm((f) => ({ ...f, equipe2: v }))} index={catalog.index} complete={catalog.complete} onFocus={catalog.refresh} />
             </div>
             <select aria-label="Type de pari" value={form.typePari} onChange={(e) => setForm({ ...form, typePari: e.target.value })} style={{ ...inputStyle(), width: "100%", marginBottom: 8 }}>
               {TYPES_PARI.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -612,8 +718,8 @@ export default function App() {
             Saisissez des matchs : le serveur choisit pour chacun le pari le plus sûr dont la probabilité reste intéressante (entre 55 % et 88 %). L'équipe 1 reçoit, l'équipe 2 se déplace.
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-            <input aria-label="Équipe 1 du match à générer" placeholder="Équipe 1" value={genForm.equipe1} onChange={(e) => setGenForm({ ...genForm, equipe1: e.target.value })} style={inputStyle()} />
-            <input aria-label="Équipe 2 du match à générer" placeholder="Équipe 2" value={genForm.equipe2} onChange={(e) => setGenForm({ ...genForm, equipe2: e.target.value })} style={inputStyle()} />
+            <TeamInput label="Équipe 1 du match à générer" placeholder="Équipe 1" value={genForm.equipe1} onChange={(v) => setGenForm((f) => ({ ...f, equipe1: v }))} index={catalog.index} complete={catalog.complete} onFocus={catalog.refresh} />
+            <TeamInput label="Équipe 2 du match à générer" placeholder="Équipe 2" value={genForm.equipe2} onChange={(v) => setGenForm((f) => ({ ...f, equipe2: v }))} index={catalog.index} complete={catalog.complete} onFocus={catalog.refresh} />
           </div>
           <button onClick={addMatchToGenerate} style={{ width: "100%", padding: 10, marginBottom: 8, background: "transparent", border: `2px dashed ${T.line}`, color: T.gold, borderRadius: 6, cursor: "pointer" }}><Plus size={14}/> Ajouter</button>
           {matchesToGenerate.map((m) => (
@@ -681,10 +787,6 @@ export default function App() {
       </div>
     </div>
   );
-}
-
-function inputStyle() {
-  return { background: "#0B1F16", border: "1px solid #1F3D2C", borderRadius: 6, padding: "10px", color: "#E9ECE3", fontSize: 14, width: "100%" };
 }
 
 function iconBtn(color) {

@@ -1,21 +1,35 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { callApi, estimateProb, estimatesForChunk, fromTopMatch, toEstimate } from "./AnalyseurCoupon";
+import { awaitsReview, callApi, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, toEstimate } from "./AnalyseurCoupon";
+import { CATALOG } from "./testData";
 
 // ---------- Faux serveur : chaque appel est enregistré, aucun appel réseau réel ----------
+// La liste des clubs (suggestions de saisie) est demandée au démarrage : par défaut elle est vide, et ses appels sont notés à part
+// (`calls.catalog`) pour ne pas se mélanger à ceux que chaque test vérifie.
+const EMPTY_CATALOG = { complet: true, championnats: [], equipes: [] };
+
 function installFetch(routes) {
   const calls = [];
+  calls.catalog = [];
   global.fetch = jest.fn((url, opts = {}) => {
     const method = (opts.method || "GET").toUpperCase();
     const path = String(url).replace(/^https?:\/\/[^/]+/, "");
-    calls.push({ url: String(url), path, method, body: opts.body ? JSON.parse(opts.body) : undefined });
+    const call = { url: String(url), path, method, body: opts.body ? JSON.parse(opts.body) : undefined };
+    if (method === "GET" && path === "/api/teams") {
+      calls.catalog.push(call);
+      if (!routes["GET /api/teams"]) return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(EMPTY_CATALOG) });
+    } else {
+      calls.push(call);
+    }
     const handler = routes[`${method} ${path}`];
     if (!handler) return Promise.reject(new Error(`appel inattendu : ${method} ${path}`));
-    const out = handler(opts.body ? JSON.parse(opts.body) : undefined);
-    if (out instanceof Error) return Promise.reject(out);
-    const status = out.status || 200;
-    return Promise.resolve({ ok: status >= 200 && status < 300, status, json: () => Promise.resolve(out.body) });
+    // Un gestionnaire peut renvoyer une promesse pour retenir la réponse (voir « deux temps » plus bas).
+    return Promise.resolve(handler(opts.body ? JSON.parse(opts.body) : undefined)).then((out) => {
+      if (out instanceof Error) throw out;
+      const status = out.status || 200;
+      return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(out.body) };
+    });
   });
   return calls;
 }
@@ -278,6 +292,7 @@ describe("onglet Mon coupon", () => {
     expect(calls[0].method).toBe("POST");
     expect(calls[0].url).toBe("https://analyseur-foot-api.onrender.com/api/analyze");
     expect(calls[0].body).toEqual({
+      ia: false, // d'abord le modèle seul ; ce serveur répond déjà avec l'IA, il n'y a donc rien à relancer
       legs: [
         { equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Plus de 1.5 buts" },
         { equipe1: "Inter", equipe2: "Torino", typePari: "Match nul" },
@@ -420,5 +435,429 @@ describe("onglet Auto", () => {
     typeMatch("Trop", "Loin");
     await screen.findByText(/12 matchs au maximum/);
     expect(screen.queryByText("Trop vs Loin")).not.toBeInTheDocument();
+  });
+});
+
+// ---------- Suggestions de clubs ----------
+const withCatalog = (over = {}) => ({ "GET /api/teams": () => ({ body: { ...CATALOG, ...over } }) });
+const savedCatalog = () => JSON.parse(localStorage.getItem("coupon-clubs"));
+const seedCatalog = (ageMs, over = {}) => localStorage.setItem("coupon-clubs", JSON.stringify({ at: Date.now() - ageMs, data: { ...CATALOG, ...over } }));
+const team1 = () => screen.getByLabelText("Équipe 1 (à domicile)");
+const team2 = () => screen.getByLabelText("Équipe 2 (à l'extérieur)");
+const suggestionOptions = () => within(screen.getByRole("listbox", { name: "Suggestions de clubs" })).getAllByRole("option"); // sans les options du menu « Type de pari »
+
+describe("liste des clubs", () => {
+  test("demandée au démarrage au serveur, puis gardée sur l'appareil", async () => {
+    const calls = installFetch(withCatalog());
+    await openApp();
+    await waitFor(() => expect(savedCatalog()).not.toBeNull());
+    expect(calls.catalog).toHaveLength(1);
+    expect(calls.catalog[0].url).toBe("https://analyseur-foot-api.onrender.com/api/teams");
+    expect(savedCatalog().data.equipes).toHaveLength(CATALOG.equipes.length);
+  });
+
+  test("liste complète récente : pas de nouvelle demande, et les suggestions marchent tout de suite", async () => {
+    seedCatalog(3600000);
+    const calls = installFetch(withCatalog());
+    await openApp();
+    userEvent.type(team1(), "psg");
+    expect(screen.getByRole("option", { name: /Paris SG/ })).toBeInTheDocument(); // sans attendre le réseau
+    userEvent.click(team2());
+    expect(calls.catalog).toHaveLength(0);
+  });
+
+  test("liste complète de plus de 24 h : redemandée, l'ancienne sert en attendant", async () => {
+    seedCatalog(25 * 3600000);
+    const calls = installFetch(withCatalog());
+    await openApp();
+    userEvent.type(team1(), "psg");
+    expect(screen.getByRole("option", { name: /Paris SG/ })).toBeInTheDocument();
+    await waitFor(() => expect(calls.catalog).toHaveLength(1));
+  });
+
+  test("liste incomplète (championnats en chargement) : redemandée dès qu'elle a plus d'une minute", async () => {
+    seedCatalog(2 * 60000, { complet: false, equipes: CATALOG.equipes.slice(0, 3) });
+    const calls = installFetch(withCatalog());
+    await openApp();
+    await waitFor(() => expect(calls.catalog).toHaveLength(1));
+    await waitFor(() => expect(savedCatalog().data.complet).toBe(true));
+    userEvent.type(team1(), "psg");
+    expect(await screen.findByRole("option", { name: /Paris SG/ })).toBeInTheDocument();
+  });
+
+  test("liste incomplète de moins d'une minute : on ne harcèle pas le serveur", async () => {
+    seedCatalog(10000, { complet: false, equipes: CATALOG.equipes.slice(0, 3) });
+    const calls = installFetch(withCatalog());
+    await openApp();
+    userEvent.click(team1());
+    userEvent.click(team2());
+    expect(calls.catalog).toHaveLength(0);
+  });
+
+  test("serveur injoignable : champs texte ordinaires, aucune erreur affichée, un seul essai par minute", async () => {
+    const calls = installFetch({ "GET /api/teams": () => new TypeError("Failed to fetch") });
+    await openApp();
+    await waitFor(() => expect(calls.catalog).toHaveLength(1));
+    userEvent.type(team1(), "psg");
+    userEvent.click(team2());
+    userEvent.click(team1());
+    expect(calls.catalog).toHaveLength(1);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(team1()).toHaveValue("psg");
+    expect(screen.queryByText(/Impossible de joindre/)).not.toBeInTheDocument();
+    userEvent.clear(team1());
+    await addMatch("psg", "om", "Match nul"); // le coupon se construit comme avant
+  });
+
+  test("liste abîmée dans le stockage de l'appareil : ignorée", async () => {
+    localStorage.setItem("coupon-clubs", "{pas du json");
+    installFetch(withCatalog());
+    await openApp();
+    userEvent.type(team1(), "psg");
+    expect(await screen.findByRole("option", { name: /Paris SG/ })).toBeInTheDocument();
+  });
+});
+
+describe("saisie d'un club avec suggestions", () => {
+  test("un surnom propose le club ; un clic le choisit", async () => {
+    installFetch(withCatalog());
+    await openApp();
+    userEvent.type(team1(), "psg");
+    const option = await screen.findByRole("option", { name: /Paris SG/ });
+    expect(within(option).getByText("PSG · Ligue 1")).toBeInTheDocument();
+    expect(team1()).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("listbox", { name: "Suggestions de clubs" })).toBeInTheDocument();
+    userEvent.click(option);
+    expect(team1()).toHaveValue("Paris SG");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(team1()).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("les deux champs sont indépendants et le coupon reçoit les noms choisis", async () => {
+    installFetch(withCatalog());
+    await openApp();
+    userEvent.type(team1(), "psg");
+    userEvent.click(await screen.findByRole("option", { name: /Paris SG/ }));
+    userEvent.type(team2(), "om");
+    userEvent.click(await screen.findByRole("option", { name: /Marseille/ }));
+    expect(team1()).toHaveValue("Paris SG");
+    expect(team2()).toHaveValue("Marseille");
+    userEvent.click(screen.getByRole("button", { name: /^Ajouter$/ }));
+    expect(await screen.findByText("Paris SG vs Marseille")).toBeInTheDocument();
+  });
+
+  test("clavier : flèches pour parcourir, Entrée pour choisir, Échap pour fermer", async () => {
+    installFetch(withCatalog());
+    await openApp();
+    userEvent.type(team1(), "man");
+    await screen.findByRole("listbox");
+    const options = suggestionOptions();
+    expect(options.map((o) => o.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("Manchester City"), expect.stringContaining("Manchester United")]));
+    expect(team1()).not.toHaveAttribute("aria-activedescendant");
+    userEvent.type(team1(), "{arrowdown}");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+    expect(team1()).toHaveAttribute("aria-activedescendant", options[0].id);
+    userEvent.type(team1(), "{arrowdown}");
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
+    expect(options[0]).toHaveAttribute("aria-selected", "false");
+    userEvent.type(team1(), "{arrowup}{arrowup}"); // remonte, puis revient à la dernière
+    expect(options[options.length - 1]).toHaveAttribute("aria-selected", "true");
+    userEvent.type(team1(), "{arrowdown}{arrowdown}");
+    userEvent.type(team1(), "{enter}");
+    expect(team1().value).toMatch(/^Manchester /);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    userEvent.clear(team1());
+    userEvent.type(team1(), "ars");
+    await screen.findByRole("option", { name: /Arsenal/ });
+    userEvent.type(team1(), "{esc}");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(team1()).toHaveValue("ars"); // Échap ne change pas la saisie
+    userEvent.type(team1(), "e"); // reprendre la saisie rouvre la liste
+    expect(await screen.findByRole("option", { name: /Arsenal/ })).toBeInTheDocument();
+  });
+
+  test("Entrée sans suggestion sélectionnée ne choisit rien", async () => {
+    installFetch(withCatalog());
+    await openApp();
+    userEvent.type(team1(), "man{enter}");
+    expect(team1()).toHaveValue("man");
+  });
+
+  test("un nom commun à plusieurs clubs les propose tous (jamais un seul au hasard)", async () => {
+    installFetch(withCatalog());
+    await openApp();
+    userEvent.type(team1(), "paris");
+    await screen.findByRole("listbox");
+    const names = suggestionOptions().map((o) => o.textContent);
+    expect(names.some((n) => n.startsWith("Paris SG"))).toBe(true);
+    expect(names.some((n) => n.startsWith("Paris FC"))).toBe(true);
+  });
+
+  test("aucun club ne correspond : message d'aide, la saisie libre reste possible", async () => {
+    installFetch(withCatalog());
+    await openApp();
+    userEvent.type(team1(), "Zzzzzz");
+    expect(await screen.findByText(/Aucun club suivi ne correspond/)).toBeInTheDocument();
+    expect(team1()).toHaveValue("Zzzzzz");
+    userEvent.clear(team1());
+    await addMatch("Zzzzzz", "Yyyyyy", "Match nul");
+  });
+
+  test("liste incomplète : le message d'aide dit que des championnats chargent encore", async () => {
+    installFetch(withCatalog({ complet: false }));
+    await openApp();
+    userEvent.type(team1(), "Zzzzzz");
+    expect(await screen.findByText(/certains championnats sont encore en chargement/)).toBeInTheDocument();
+  });
+
+  test("perdre le focus ferme la liste", async () => {
+    installFetch(withCatalog());
+    await openApp();
+    userEvent.type(team1(), "psg");
+    await screen.findByRole("listbox");
+    userEvent.click(team2());
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  test("onglet Auto : les mêmes suggestions", async () => {
+    installFetch(withCatalog());
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Auto" }));
+    userEvent.type(screen.getByLabelText("Équipe 1 du match à générer"), "bay");
+    userEvent.click(await screen.findByRole("option", { name: /Bayern Munich/ }));
+    userEvent.type(screen.getByLabelText("Équipe 2 du match à générer"), "bvb");
+    userEvent.click(await screen.findByRole("option", { name: /Borussia Dortmund/ }));
+    userEvent.click(screen.getByRole("button", { name: /Ajouter/ }));
+    expect(await screen.findByText("Bayern Munich vs Borussia Dortmund")).toBeInTheDocument();
+  });
+});
+
+// ---------- Noms reconnus par le serveur ----------
+const parisLeg = (over = {}) => okLeg({ equipe1: "Paris SG", equipe2: "Marseille", competition: "Ligue 1", date: "2026-10-18T19:45:00.000Z", ...over });
+
+describe("noms reconnus", () => {
+  test("lecture des réponses : noms, championnat et date sont conservés", () => {
+    const e = toEstimate(parisLeg());
+    expect(e).toMatchObject({ equipe1: "Paris SG", equipe2: "Marseille", competition: "Ligue 1", date: "2026-10-18T19:45:00.000Z" });
+    expect(fromTopMatch(topEntry(0))).toMatchObject({ equipe1: "Arsenal", equipe2: "Chelsea", competition: "Premier League" });
+  });
+
+  test("après l'analyse, le coupon affiche le nom reconnu, le championnat et rappelle la saisie", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [parisLeg()] } }) });
+    await openApp();
+    await addMatch("PSG", "OM", "Plus de 1.5 buts");
+    expect(screen.queryByText("Saisi : PSG – OM")).not.toBeInTheDocument(); // rien avant l'analyse
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    expect(await screen.findByText("Paris SG vs Marseille")).toBeInTheDocument();
+    expect(screen.getByText("Saisi : PSG – OM")).toBeInTheDocument();
+    expect(screen.getByText(/^Ligue 1 · /)).toBeInTheDocument();
+    expect(screen.queryByText("PSG vs OM")).not.toBeInTheDocument();
+  });
+
+  test("pas de rappel de la saisie quand le nom reconnu n'est que sa version complète (« Arsenal » → « Arsenal FC »)", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [okLeg({ equipe1: "Arsenal FC", equipe2: "Chelsea FC" })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    expect(await screen.findByText("Arsenal FC vs Chelsea FC")).toBeInTheDocument();
+    expect(screen.queryByText(/^Saisi :/)).not.toBeInTheDocument();
+  });
+
+  test("deux écritures d'un même match sont reconnues comme le même match une fois analysées", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [parisLeg(), parisLeg({ typePari: "Match nul", probabilite: 24 })] } }) });
+    await openApp();
+    await addMatch("PSG", "OM", "Plus de 1.5 buts");
+    await addMatch("Paris Saint-Germain", "Olympique de Marseille", "Match nul");
+    expect(screen.queryByText(/portent sur le même match/)).not.toBeInTheDocument();
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await screen.findAllByText("Paris SG vs Marseille");
+    expect(await screen.findByText(/portent sur le même match/)).toBeInTheDocument();
+  });
+
+  test("l'historique garde les noms reconnus", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [parisLeg()] } }) });
+    await openApp();
+    await addMatch("PSG", "OM", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await screen.findByText("Paris SG vs Marseille");
+    userEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+    userEvent.click(screen.getByRole("button", { name: "Historique" }));
+    expect(await screen.findByText("Paris SG vs Marseille - Plus de 1.5 buts")).toBeInTheDocument();
+    const saved = JSON.parse(localStorage.getItem("coupon-pronostics"));
+    expect(saved[0]).toMatchObject({ equipe1: "Paris SG", equipe2: "Marseille" });
+  });
+
+  test("un match du Top Matchs ajouté au coupon montre son championnat", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload() }) });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Arsenal vs Chelsea");
+    userEvent.click(screen.getAllByRole("button", { name: "Ajouter ce pronostic" })[0]);
+    userEvent.click(screen.getByRole("button", { name: "Mon coupon" }));
+    expect(screen.getByText(/^Premier League · /)).toBeInTheDocument();
+  });
+});
+
+// ---------- Analyse en deux temps ----------
+const quick = (over = {}) => okLeg({ probabilite: 60, ajustementIA: 0, justification: "Texte du modèle.", ia: { statut: "non_demandee" }, ...over });
+const reviewed = (over = {}) => okLeg({ probabilite: 62.5, ajustementIA: 2.5, justification: "Texte relu par l'IA.", ia: { statut: "ok", modele: "claude-sonnet-5-5" }, ...over });
+const analyzeCalls = (calls) => calls.filter((c) => c.path === "/api/analyze");
+
+describe("analyse en deux temps", () => {
+  test("le modèle s'affiche tout de suite, la relecture de l'IA vient ensuite l'ajuster", async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const calls = installFetch({
+      "POST /api/analyze": (body) => (body.ia === false ? { body: { legs: [quick()] } } : gate.then(() => ({ body: { legs: [reviewed()] } }))),
+    });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    // Temps 1 : le résultat du modèle, sans attendre l'IA
+    expect((await screen.findAllByText("60 %")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/la relecture par l'IA est en cours/)).toBeInTheDocument();
+    expect(screen.queryByText("Estimation indicative")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Analyse…/ })).toBeDisabled();
+    // Temps 2 : la relecture arrive
+    release();
+    expect((await screen.findAllByText("63 %")).length).toBeGreaterThan(0); // 62,5 arrondi
+    expect(screen.queryByText("60 %")).not.toBeInTheDocument();
+    expect(screen.queryByText(/la relecture par l'IA est en cours/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Analyser/ })).toBeEnabled();
+    const posts = analyzeCalls(calls);
+    expect(posts).toHaveLength(2);
+    expect(posts[0].body).toEqual({ ia: false, legs: [{ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Plus de 1.5 buts" }] });
+    expect(posts[1].body).toEqual({ legs: [{ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Plus de 1.5 buts" }] }); // sans « ia: false »
+  });
+
+  test("les détails montrent le texte de l'IA une fois la relecture arrivée", async () => {
+    installFetch({ "POST /api/analyze": (body) => ({ body: { legs: [body.ia === false ? quick() : reviewed()] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await screen.findAllByText("63 %");
+    userEvent.click(screen.getByRole("button", { name: "Détails" }));
+    expect(screen.getByText("Texte relu par l'IA.")).toBeInTheDocument();
+    expect(screen.queryByText("Texte du modèle.")).not.toBeInTheDocument();
+  });
+
+  test("seules les sélections qui attendent l'IA sont relancées (un score exact n'en a pas besoin)", async () => {
+    const calls = installFetch({
+      "POST /api/analyze": (body) =>
+        body.ia === false
+          ? { body: { legs: [quick(), quick({ equipe1: "Inter", equipe2: "Torino", typePari: "Score exact", probabilite: 11, ia: { statut: "non_applicable" } })] } }
+          : { body: { legs: [reviewed()] } },
+    });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    await addMatch("Inter", "Torino", "Score exact");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await screen.findAllByText("63 %");
+    expect(screen.getByText("11 %")).toBeInTheDocument();
+    const posts = analyzeCalls(calls);
+    expect(posts).toHaveLength(2);
+    expect(posts[1].body.legs).toEqual([{ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Plus de 1.5 buts" }]);
+  });
+
+  test("la relecture échoue : le résultat du modèle reste affiché, avec la raison", async () => {
+    installFetch({
+      "POST /api/analyze": (body) => (body.ia === false ? { body: { legs: [quick()] } } : { status: 429, body: { error: "Trop de demandes : réessayez dans 12 s." } }),
+    });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    expect(await screen.findByText(/La relecture par l'IA n'a pas pu être faite \(Trop de demandes : réessayez dans 12 s\.\) : le modèle statistique répond seul\./)).toBeInTheDocument();
+    expect(screen.getAllByText("60 %").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Analyse impossible/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Analyser/ })).toBeEnabled();
+  });
+
+  test("le serveur tombe pendant la relecture : même résultat, le modèle reste affiché", async () => {
+    installFetch({
+      "POST /api/analyze": (body) => (body.ia === false ? { body: { legs: [quick()] } } : new TypeError("Failed to fetch")),
+    });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    expect(await screen.findByText(/La relecture par l'IA n'a pas pu être faite \(Impossible de joindre le serveur/)).toBeInTheDocument();
+    expect(screen.getAllByText("60 %").length).toBeGreaterThan(0);
+  });
+
+  test("la relecture est indisponible côté serveur : le modèle reste, avec l'avis habituel", async () => {
+    installFetch({
+      "POST /api/analyze": (body) => ({ body: { legs: [body.ia === false ? quick() : reviewed({ probabilite: 60, ajustementIA: 0, ia: { statut: "indisponible", code: "TIMEOUT", message: "délai dépassé" } })] } }),
+    });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    expect(await screen.findByText(/relecture par l'IA était indisponible pour une sélection/)).toBeInTheDocument();
+    expect(screen.getAllByText("60 %").length).toBeGreaterThan(0);
+  });
+
+  test("IA désactivée sur le serveur : une seule requête, rien à relancer", async () => {
+    const calls = installFetch({ "POST /api/analyze": () => ({ body: { legs: [quick({ ia: { statut: "desactivee" } })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await screen.findAllByText("60 %");
+    expect(analyzeCalls(calls)).toHaveLength(1);
+  });
+
+  test("la relecture ne remplace jamais une probabilité par un échec", async () => {
+    installFetch({
+      "POST /api/analyze": (body) =>
+        body.ia === false
+          ? { body: { legs: [quick()] } }
+          : { body: { legs: [{ etat: "chargement", probabilite: null, message: "Les données des championnats sont en cours de chargement, réessayez dans une minute." }] } },
+    });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Analyser/ })).toBeEnabled());
+    expect(screen.getAllByText("60 %").length).toBeGreaterThan(0);
+    expect(screen.queryByText("?")).not.toBeInTheDocument();
+  });
+
+  test("premier temps en échec : message d'erreur comme avant, aucune relecture tentée", async () => {
+    const calls = installFetch({ "POST /api/analyze": () => ({ status: 503, body: { error: "Aucune source de données n'est disponible pour le moment." } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await screen.findByText(/Analyse impossible : Aucune source de données n'est disponible/);
+    expect(analyzeCalls(calls)).toHaveLength(1);
+  });
+
+  test("plus de douze sélections : chaque temps se fait par séries de douze", async () => {
+    const calls = installFetch({
+      "POST /api/analyze": (body) => ({ body: { legs: body.legs.map((l) => (body.ia === false ? quick({ equipe1: l.equipe1, equipe2: l.equipe2 }) : reviewed({ equipe1: l.equipe1, equipe2: l.equipe2 }))) } }),
+    });
+    await openApp();
+    for (let i = 0; i < 13; i += 1) await addMatch(`Dom${i}`, `Ext${i}`, "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await waitFor(() => expect(screen.getAllByText("63 %").length).toBeGreaterThan(12), { timeout: 5000 });
+    const sizes = analyzeCalls(calls).map((c) => [c.body.ia === false ? "modele" : "ia", c.body.legs.length]);
+    expect(sizes).toEqual([["modele", 12], ["modele", 1], ["ia", 12], ["ia", 1]]);
+  }, 15000);
+});
+
+describe("fusion des estimations", () => {
+  test("une probabilité n'est jamais remplacée par un échec, mais un échec peut remplacer un échec", () => {
+    const prev = { a: { p: 0.6 }, b: { p: null, message: "ancien" } };
+    const out = mergeEstimates(prev, { a: { p: null, message: "échec" }, b: { p: null, message: "nouveau" }, c: { p: 0.5 }, d: { p: null, message: "x" } });
+    expect(out.a.p).toBe(0.6);
+    expect(out.b.message).toBe("nouveau");
+    expect(out.c.p).toBe(0.5);
+    expect(out.d.message).toBe("x");
+    expect(prev.a.p).toBe(0.6); // l'original n'est pas modifié
+  });
+
+  test("une réponse attend la relecture de l'IA seulement si elle est valide et sans IA demandée", () => {
+    expect(awaitsReview(quick())).toBe(true);
+    expect(awaitsReview(okLeg())).toBe(false);
+    expect(awaitsReview(quick({ ia: { statut: "desactivee" } }))).toBe(false);
+    expect(awaitsReview(quick({ ia: { statut: "non_applicable" } }))).toBe(false);
+    expect(awaitsReview({ etat: "equipe_inconnue", ia: { statut: "non_demandee" } })).toBe(false);
+    expect(awaitsReview(undefined)).toBe(false);
   });
 });
