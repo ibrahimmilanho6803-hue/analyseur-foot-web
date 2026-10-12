@@ -30,7 +30,7 @@ concurrency:
 jobs:
   apk:
     name: Tests et APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # version fixée : « ubuntu-latest » passe à Ubuntu 26 le 19 octobre 2026
     timeout-minutes: 60
     permissions:
       contents: write # seulement pour publier l'APK (dernière étape, branche principale)

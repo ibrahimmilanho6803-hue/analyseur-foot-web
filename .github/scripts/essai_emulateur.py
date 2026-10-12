@@ -30,8 +30,9 @@ CAPTURES = None
 LARGEUR = 0
 HAUTEUR = 0
 RESULTATS = []  # (réussi, étape, détail)
-ECHEC_FATAL = False
 N_CAPTURE = 0
+JOURNAL = []  # lignes utiles du journal du téléphone (logcat), recueillies avant chaque effacement
+JOURNAL_UTILE = re.compile(r"com\.analyseur\.footpro|ReactNative|AndroidRuntime|SoLoader|DEBUG|libc|Hermes|[Ee]xpo|ANR in|Fatal signal|FATAL")
 
 
 # ---------------------------------------------------------------------------------------------------------------- compte rendu
@@ -81,6 +82,7 @@ class Noeud:
         self.texte = e.get("text", "")
         self.desc = e.get("content-desc", "")
         self.classe = e.get("class", "")
+        self.paquet = e.get("package", "")
         self.clic = e.get("clickable") == "true"
         m = BORNES.match(e.get("bounds", ""))
         self.x1, self.y1, self.x2, self.y2 = (int(v) for v in m.groups()) if m else (0, 0, 0, 0)
@@ -116,10 +118,12 @@ def ecran(garde=None):
 
 
 def trouve(noeuds, motif, champ="les deux"):
-    """Éléments dont le texte (ou la description) correspond en entier à l'expression régulière 'motif'."""
+    """Éléments DE L'APPLICATION dont le texte (ou la description) correspond en entier à l'expression régulière 'motif'."""
     rx = re.compile(motif, re.S)
     res = []
     for n in noeuds or []:
+        if n.paquet != PKG:  # pas le lanceur d'applications ni une fenêtre du système
+            continue
         valeurs = {"texte": [n.texte], "desc": [n.desc], "les deux": [n.texte, n.desc]}[champ]
         if any(v and rx.fullmatch(v) for v in valeurs):
             res.append(n)
@@ -173,8 +177,12 @@ def vu(noeuds, n=14):
     """Quelques textes visibles à l'écran, pour comprendre un échec."""
     if not noeuds:
         return "écran illisible"
+    de_l_app = [x for x in noeuds if x.paquet == PKG]
+    if not de_l_app:
+        paquets = sorted({x.paquet for x in noeuds})
+        return f"aucun élément de l'application ; fenêtres : {paquets}"
     textes = []
-    for x in noeuds:
+    for x in de_l_app:
         t = x.texte or x.desc
         if t and t not in textes:
             textes.append(t if len(t) < 60 else t[:57] + "…")
@@ -183,10 +191,27 @@ def vu(noeuds, n=14):
 
 def sortie_d_ecran(noeuds):
     """Éléments avec du texte qui dépassent du côté de l'écran (défaut de mise en page)."""
-    return [n for n in noeuds if (n.texte or n.desc) and (n.x2 > LARGEUR + 2 or n.x1 < -2) and n.x2 > n.x1]
+    return [n for n in noeuds if n.paquet == PKG and (n.texte or n.desc) and (n.x2 > LARGEUR + 2 or n.x1 < -2) and n.x2 > n.x1]
 
 
 # ---------------------------------------------------------------------------------------------------------------- étapes
+def collecte_journal():
+    """Garde les lignes utiles du journal du téléphone puis l'efface (le prochain démarrage repart d'un journal vide)."""
+    _, brut, _ = adb("logcat", "-d", "-v", "threadtime", delai=120)
+    JOURNAL.extend(l for l in brut.splitlines() if JOURNAL_UTILE.search(l))
+    adb("logcat", "-c")
+
+
+def plante():
+    """Début de l'erreur fatale si l'application a planté depuis l'effacement du journal, sinon chaîne vide."""
+    _, brut, _ = adb("logcat", "-d", "-b", "crash", "-v", "brief", delai=60)
+    lignes = brut.splitlines()
+    for i, l in enumerate(lignes):
+        if "FATAL EXCEPTION" in l or "Fatal signal" in l:
+            return " | ".join(x.split(": ", 1)[-1].strip() for x in lignes[i : i + 4])[:500]
+    return ""
+
+
 def verifie_delai():
     if time.time() > FIN:
         echoue("Durée", "l'essai a dépassé 15 minutes")
@@ -220,17 +245,27 @@ def installe(apk):
 
 
 def lance():
-    """Ouvre l'application comme le ferait un appui sur son icône. Renvoie les éléments de l'écran d'accueil ou None."""
+    """Ouvre l'application comme le ferait un appui sur son icône. Renvoie (écran, durée) ou None si elle ne s'ouvre pas."""
     adb("shell", "am", "force-stop", PKG)
     adb("shell", "input", "keyevent", "KEYCODE_HOME")
+    collecte_journal()
     debut = time.time()
     adb("shell", "monkey", "-p", PKG, "-c", "android.intent.category.LAUNCHER", "1")
-    trouve_titre, noeuds = attend(lambda ns: trouve(ns, r"Analyseur Foot Pro", "texte"), 150)
-    if not trouve_titre:
-        capture("demarrage-echec")
-        echoue("Démarrage de l'application", f"le titre n'apparaît pas après 150 s ; à l'écran : {vu(noeuds)}")
-        return None
-    return noeuds, time.time() - debut
+    fin = min(time.time() + 150, FIN)
+    noeuds = None
+    while time.time() < fin:
+        noeuds = ecran()
+        if noeuds and trouve(noeuds, r"Analyseur Foot Pro", "texte"):
+            return noeuds, time.time() - debut
+        erreur = plante()
+        if erreur:
+            capture("demarrage-plante")
+            echoue("Démarrage de l'application", f"l'application plante : {erreur}")
+            return None
+        time.sleep(2)
+    capture("demarrage-echec")
+    echoue("Démarrage de l'application", f"le titre n'apparaît pas après 150 s ; à l'écran : {vu(noeuds)}")
+    return None
 
 
 def onglet(noeuds, nom):
@@ -412,15 +447,14 @@ def verifie_suggestions():
 
 
 def verifie_journal(dossier):
-    code, journal, _ = adb("logcat", "-d", "-v", "threadtime", delai=120)
+    collecte_journal()
     if dossier:
         with open(os.path.join(dossier, "logcat.txt"), "w", encoding="utf-8") as f:
-            f.write(journal)
-    lignes = journal.splitlines()
-    fatales = [l for l in lignes if re.search(r"FATAL EXCEPTION|Fatal signal \d+|ANR in com\.analyseur\.footpro", l)]
-    js = [l for l in lignes if re.search(r" E ReactNativeJS", l)]
-    polices = [l for l in lignes if "Polices non chargées" in l]
-    avertissements_js = [l for l in lignes if re.search(r" W ReactNativeJS", l)]
+            f.write("\n".join(JOURNAL) + "\n")
+    fatales = [l for l in JOURNAL if re.search(r"FATAL EXCEPTION|Fatal signal \d+|ANR in com\.analyseur\.footpro", l)]
+    js = [l for l in JOURNAL if re.search(r" E ReactNativeJS", l)]
+    polices = [l for l in JOURNAL if "Polices non chargées" in l]
+    avertissements_js = [l for l in JOURNAL if re.search(r" W ReactNativeJS", l)]
     if fatales:
         echoue("Journal du téléphone", f"{len(fatales)} erreur(s) fatale(s) : {fatales[0][-300:]}")
     elif js:
@@ -428,7 +462,7 @@ def verifie_journal(dossier):
     elif polices:
         echoue("Journal du téléphone", f"polices non chargées : {polices[0][-300:]}")
     else:
-        reussi("Journal du téléphone", f"aucune erreur fatale ni JavaScript ({len(lignes)} lignes lues)")
+        reussi("Journal du téléphone", f"aucune erreur fatale ni JavaScript ({len(JOURNAL)} lignes utiles lues)")
     if avertissements_js:
         avertit("Avertissements JavaScript", f"{len(avertissements_js)} : {avertissements_js[0][-250:]}")
 
@@ -458,7 +492,6 @@ def main():
     infos_telephone()
     if not installe(apk):
         return conclusion()
-    adb("logcat", "-c")
     depart = lance()
     if depart is None:
         verifie_journal(CAPTURES)

@@ -33,6 +33,10 @@ export default function App() {
     if (ready) SplashScreen.hideAsync().catch(() => {});
   }, [ready]);
 
+  useEffect(() => {
+    if (fontError) console.warn("Polices non chargées, police du téléphone utilisée :", fontError.message);
+  }, [fontError]);
+
   if (!ready) return null;
   return (
     <SafeAreaProvider>

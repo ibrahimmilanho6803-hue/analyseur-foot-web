@@ -1,13 +1,14 @@
 # Mise au point de l'essai de l'APK dans un téléphone virtuel (fichier temporaire : il sera intégré à « APK Android » puis supprimé).
-# Reprend l'APK d'une construction déjà réussie au lieu d'en refaire une (gain de 9 minutes par essai).
+# Reprend l'APK d'une construction déjà réussie au lieu d'en refaire une (gain de 9 minutes par essai). Lancement à la main.
 name: Essai émulateur (mise au point)
 
 on:
-  pull_request:
-    paths:
-      - ".github/scripts/**"
-      - ".github/workflows/essai-emulateur-dev.yml"
   workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Numéro de l'exécution « APK Android » dont on reprend l'APK (vide : la dernière réussie de la branche)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -21,12 +22,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Récupérer l'APK d'une construction déjà réussie
+      - name: Choisir l'exécution dont on reprend l'APK
+        id: choix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEMANDE: ${{ inputs.run_id }}
+        run: |
+          ID="$DEMANDE"
+          if [ -z "$ID" ]; then
+            ID="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow apk-android.yml --branch "$GITHUB_REF_NAME" --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "::notice title=APK repris de l'exécution::$ID"
+
+      - name: Récupérer l'APK
         uses: actions/download-artifact@v8
         with:
           name: analyseur-foot-pro-apk
           path: apk
-          run-id: "38269046850"
+          run-id: ${{ steps.choix.outputs.id }}
           github-token: ${{ github.token }}
 
       - name: Activer KVM (accélération matérielle de l'émulateur)
@@ -37,7 +51,8 @@ jobs:
 
       - name: Réveiller le serveur (il s'endort quand personne ne l'utilise)
         run: |
-          curl -sS -m 150 -o /dev/null -w 'Serveur : HTTP %{http_code} en %{time_total} s\n' https://analyseur-foot-api.onrender.com/api/teams || echo "Serveur injoignable pour l'instant"
+          R="$(curl -sS -m 150 -o /dev/null -w 'HTTP %{http_code} en %{time_total} s' https://analyseur-foot-api.onrender.com/api/teams 2>&1 || true)"
+          echo "::notice title=Serveur::$R"
 
       - name: Essai dans un téléphone virtuel Android
         uses: reactivecircus/android-emulator-runner@v2
@@ -54,7 +69,7 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          SHA: ${{ github.sha }}
         run: |
           [ -d captures ] || { echo "pas de captures"; exit 0; }
           pip install --quiet pillow
