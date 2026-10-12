@@ -119,7 +119,7 @@ def ecran(garde=None):
 
 def trouve(noeuds, motif, champ="les deux"):
     """Éléments DE L'APPLICATION dont le texte (ou la description) correspond en entier à l'expression régulière 'motif'."""
-    rx = re.compile(motif, re.S)
+    rx = re.compile(motif, re.S | re.I)  # sans tenir compte de la casse : les titres sont affichés en majuscules
     res = []
     for n in noeuds or []:
         if n.paquet != PKG:  # pas le lanceur d'applications ni une fenêtre du système
@@ -210,6 +210,22 @@ def plante():
         if "FATAL EXCEPTION" in l or "Fatal signal" in l:
             return " | ".join(x.split(": ", 1)[-1].strip() for x in lignes[i : i + 4])[:500]
     return ""
+
+
+def reseau(actif):
+    """Mode avion du téléphone virtuel : coupe ou rétablit le réseau (pour ne pas faire de vraies analyses pendant l'essai)."""
+    adb("shell", "cmd", "connectivity", "airplane-mode", "enable" if actif is False else "disable")
+    time.sleep(4)
+    mode_avion = adb("shell", "settings", "get", "global", "airplane_mode_on")[1].strip()
+    if actif:
+        # le Wi-Fi virtuel se reconnecte tout seul ; on attend que le téléphone juge la connexion valide
+        fin = time.time() + 45
+        while time.time() < fin:
+            if "VALIDATED" in adb("shell", "dumpsys", "connectivity", delai=60)[1]:
+                return True
+            time.sleep(3)
+        return False
+    return mode_avion == "1"
 
 
 def verifie_delai():
@@ -304,17 +320,31 @@ def verifie_onglets():
     for nom, attendu, court in ONGLETS:
         if not verifie_delai():
             return
+        hors_ligne = court == "top"
+        if hors_ligne:
+            # L'onglet « Top Matchs » interroge le serveur dès qu'on l'ouvre (analyse de tous les championnats, avec l'IA) :
+            # pendant l'essai on le fait hors ligne, pour voir le message d'erreur sans consommer les appels du serveur.
+            if not reseau(False):
+                avertit("Onglet « Top Matchs »", "le mode avion n'a pas pu être activé : onglet non essayé (pour ne pas lancer une vraie analyse)")
+                continue
         noeuds = ouvre_onglet(nom, attendu)
+        detail = "affiché"
+        if noeuds is not None and hors_ligne:
+            erreur, plus_recent = attend(lambda ns: trouve(ns, r"Impossible de charger les matchs.*", "texte"), 20)
+            noeuds = plus_recent or noeuds
+            detail = f"affiché hors ligne avec son message d'erreur « {erreur[0].texte[:80]} »" if erreur else f"affiché mais sans message d'erreur hors ligne ; à l'écran : {vu(noeuds)}"
         if noeuds is None:
             capture(f"onglet-{court}-echec")
             echoue(f"Onglet « {nom} »", f"le contenu « {attendu} » n'apparaît pas")
-            continue
-        capture(f"onglet-{court}")
-        debord = sortie_d_ecran(noeuds)
-        if debord:
-            avertit(f"Onglet « {nom} »", f"{len(debord)} élément(s) dépassent de l'écran ({LARGEUR} px) : {debord[:3]}")
         else:
-            reussi(f"Onglet « {nom} »", "affiché, rien ne dépasse de l'écran")
+            capture(f"onglet-{court}")
+            debord = sortie_d_ecran(noeuds)
+            if debord:
+                avertit(f"Onglet « {nom} »", f"{detail} ; {len(debord)} élément(s) dépassent de l'écran ({LARGEUR} px) : {debord[:3]}")
+            else:
+                reussi(f"Onglet « {nom} »", f"{detail}, rien ne dépasse de l'écran")
+        if hors_ligne and not reseau(True):
+            avertit("Réseau", "connexion non rétablie après 45 s ; les essais suivants qui en dépendent peuvent échouer")
 
 
 def verifie_retour():
