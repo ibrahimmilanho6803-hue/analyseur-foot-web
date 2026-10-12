@@ -61,7 +61,7 @@ téléphone (mêmes clés de stockage que le site : `coupon-pronostics` et `coup
 
 **Installer l'application sur un téléphone Android**
 
-1. Ouvrir sur le téléphone le lien de téléchargement, qui ne change jamais :
+1. Sur un téléphone Android 7 ou plus récent, ouvrir le lien de téléchargement, qui ne change jamais :
    <https://github.com/ibrahimmilanho6803-hue/analyseur-foot-web/releases/download/apk-latest/analyseur-foot-pro.apk>
 2. Ouvrir le fichier téléchargé et autoriser l'installation depuis cette source si Android le demande (réglage « Installer des
    applications inconnues » pour le navigateur utilisé). Android Play Protect peut afficher un avertissement pour une application
@@ -75,23 +75,36 @@ l'ancienne ne sait plus analyser (voir plus bas) et peut être désinstallée.
 **iPhone** : l'application native n'est pas fournie (il faut un compte Apple Developer payant). Le site fonctionne très bien sur
 iPhone : ouvrir <https://analyseur-foot-web.vercel.app> dans Safari, puis « Partager » ▸ « Sur l'écran d'accueil ».
 
-**Comment l'APK est construit**
+**Comment l'APK est construit et vérifié**
 
-Le workflow GitHub Actions [`APK Android`](.github/workflows/apk-android.yml) exécute les tests, génère le projet Android
-(`npx expo prebuild`, le dossier `mobile/android/` n'est jamais écrit à la main ni versionné), compile l'APK et le nomme
-`analyseur-foot-pro.apk`.
+Le workflow GitHub Actions [`APK Android`](.github/workflows/apk-android.yml) enchaîne trois étapes :
 
-- Sur une demande de fusion (*pull request*) : l'APK est téléchargeable 30 jours dans les **Artifacts** de l'exécution (onglet
-  Actions) ; rien n'est publié.
-- Sur la branche principale ou à la main (Actions ▸ « APK Android » ▸ Run workflow) : l'APK remplace celui de la version
-  « apk-latest » (Releases), d'où le lien stable ci-dessus. Le `versionCode` prend le numéro de l'exécution : il augmente à chaque
-  construction, ce qui permet de mettre à jour par-dessus.
-- **Signature** : l'APK est signé avec la clé de débogage standard d'Expo (elle est publique). C'est suffisant pour installer et
-  partager l'APK soi-même, et les mises à jour fonctionnent (même clé à chaque fois), mais **pas pour Google Play**, qui exige un
-  compte développeur (25 USD, une fois), une clé de publication privée et la validation de la politique sur les jeux d'argent.
-  Changer de clé plus tard obligerait chacun à désinstaller puis réinstaller l'application (l'historique enregistré serait perdu) :
-  si l'application est amenée à être largement diffusée, il vaut mieux créer la clé privée (à stocker dans les *Secrets* GitHub, jamais
-  dans le dépôt, qui est public) **avant** la diffusion.
+1. **Tests et APK** : les tests, la génération du projet Android (`npx expo prebuild`, le dossier `mobile/android/` n'est jamais écrit
+   à la main ni versionné), la compilation de l'APK (nommé `analyseur-foot-pro.apk`, une vingtaine de Mo) et son contrôle
+   (identifiant, numéro de version, permissions, processeurs pris en charge, signature).
+2. **Essai sur téléphone virtuel** : l'APK est installé dans un émulateur Android 14 ([script](.github/scripts/essai_emulateur.py)),
+   puis utilisé comme sur un téléphone. L'application s'ouvre, les quatre onglets s'affichent, le bouton « retour » ramène à « Mon
+   coupon », un coupon est enregistré puis l'application est fermée et rouverte (le coupon est toujours dans l'Historique), un nom de
+   club est tapé (le serveur propose des suggestions) et le journal du téléphone ne contient aucune erreur de l'application. Hors
+   ligne, l'onglet « Top Matchs » affiche un message lisible. Les captures d'écran sont dans les **Artifacts** de l'exécution.
+   Cet essai ne lance aucune analyse : ni appel à l'IA, ni consommation du quota de la source de données.
+3. **Publier l'APK** : seulement sur la branche principale (ou à la main : Actions ▸ « APK Android » ▸ Run workflow) et seulement si
+   les deux étapes précédentes ont réussi. L'APK remplace celui de la version « apk-latest » (Releases), d'où le lien stable
+   ci-dessus. Le `versionCode` prend le numéro de l'exécution : il augmente à chaque construction, ce qui permet de mettre à jour
+   par-dessus.
+
+Sur une demande de fusion (*pull request*), seules les étapes 1 et 2 s'exécutent : l'APK est téléchargeable 30 jours dans les
+**Artifacts** de l'exécution (onglet Actions) et rien n'est publié.
+
+L'essai tourne sur un émulateur PC (l'APK, conçu pour les processeurs ARM des téléphones, y est exécuté par traduction) : il ne
+remplace pas un essai sur un vrai téléphone, en particulier sur les marques qui modifient Android (Samsung, Xiaomi…).
+
+**Signature** : l'APK est signé avec la clé de débogage standard d'Expo (elle est publique). C'est suffisant pour installer et
+partager l'APK soi-même, et les mises à jour fonctionnent (même clé à chaque fois), mais **pas pour Google Play**, qui exige un
+compte développeur (25 USD, une fois), une clé de publication privée et la validation de la politique sur les jeux d'argent.
+Changer de clé plus tard obligerait chacun à désinstaller puis réinstaller l'application (l'historique enregistré serait perdu) :
+si l'application est amenée à être largement diffusée, il vaut mieux créer la clé privée (à stocker dans les *Secrets* GitHub, jamais
+dans le dépôt, qui est public) **avant** la diffusion.
 
 **Développer**
 

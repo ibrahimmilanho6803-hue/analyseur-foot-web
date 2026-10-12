@@ -332,7 +332,13 @@ def verifie_onglets():
         if noeuds is not None and hors_ligne:
             erreur, plus_recent = attend(lambda ns: trouve(ns, r"Impossible de charger les matchs.*", "texte"), 20)
             noeuds = plus_recent or noeuds
-            detail = f"affiché hors ligne avec son message d'erreur « {erreur[0].texte[:80]} »" if erreur else f"affiché mais sans message d'erreur hors ligne ; à l'écran : {vu(noeuds)}"
+            if not erreur:
+                detail = f"affiché mais sans message d'erreur hors ligne ; à l'écran : {vu(noeuds)}"
+            elif re.search(r"java\.|Exception|fetch failed", erreur[0].texte):
+                echoue("Message d'erreur hors ligne", f"texte technique affiché à l'utilisateur : « {erreur[0].texte[:200]} »")
+                detail = "affiché hors ligne"
+            else:
+                detail = f"affiché hors ligne avec un message lisible « {erreur[0].texte[:90]} »"
         if noeuds is None:
             capture(f"onglet-{court}-echec")
             echoue(f"Onglet « {nom} »", f"le contenu « {attendu} » n'apparaît pas")
@@ -481,18 +487,36 @@ def verifie_journal(dossier):
     if dossier:
         with open(os.path.join(dossier, "logcat.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(JOURNAL) + "\n")
-    fatales = [l for l in JOURNAL if re.search(r"FATAL EXCEPTION|Fatal signal \d+|ANR in com\.analyseur\.footpro", l)]
+    # Les applications du téléphone virtuel (Google, etc.) plantent parfois sous traduction ARM : seuls comptent les processus de l'application.
+    pids = set(re.findall(r"Start proc (\d+):com\.analyseur\.footpro", "\n".join(JOURNAL)))
+    fatales = []
+    ignorees = 0
+    for i, l in enumerate(JOURNAL):
+        if "FATAL EXCEPTION" in l:
+            if any("Process: com.analyseur.footpro" in x for x in JOURNAL[i + 1 : i + 3]):
+                fatales.append(l)
+            else:
+                ignorees += 1
+        m = re.search(r"Fatal signal \d+ .*pid (\d+)", l)
+        if m:
+            if m.group(1) in pids:
+                fatales.append(l)
+            else:
+                ignorees += 1
+        if "ANR in com.analyseur.footpro" in l:
+            fatales.append(l)
     js = [l for l in JOURNAL if re.search(r" E ReactNativeJS", l)]
     polices = [l for l in JOURNAL if "Polices non chargées" in l]
     avertissements_js = [l for l in JOURNAL if re.search(r" W ReactNativeJS", l)]
     if fatales:
-        echoue("Journal du téléphone", f"{len(fatales)} erreur(s) fatale(s) : {fatales[0][-300:]}")
+        echoue("Journal du téléphone", f"{len(fatales)} erreur(s) fatale(s) de l'application : {fatales[0][-300:]}")
     elif js:
         echoue("Journal du téléphone", f"{len(js)} erreur(s) JavaScript : {js[0][-300:]}")
     elif polices:
         echoue("Journal du téléphone", f"polices non chargées : {polices[0][-300:]}")
     else:
-        reussi("Journal du téléphone", f"aucune erreur fatale ni JavaScript ({len(JOURNAL)} lignes utiles lues)")
+        suite = f" ; {ignorees} plantage(s) d'autres applications du téléphone virtuel ignoré(s)" if ignorees else ""
+        reussi("Journal du téléphone", f"aucune erreur fatale ni JavaScript de l'application ({len(JOURNAL)} lignes utiles lues{suite})")
     if avertissements_js:
         avertit("Avertissements JavaScript", f"{len(avertissements_js)} : {avertissements_js[0][-250:]}")
 

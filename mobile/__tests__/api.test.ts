@@ -36,6 +36,32 @@ describe("appel du serveur", () => {
     await expect(callApi("/api/x")).rejects.toThrow(/Impossible de joindre le serveur/);
   });
 
+  test("serveur injoignable avec le fetch d'Expo sur Android : jamais de texte technique", async () => {
+    // Ce que l'application affichait hors connexion sur un téléphone (vu dans l'émulateur) : ce n'est pas une TypeError.
+    installFetch({ "GET /api/x": () => new Error('fetch failed: java.net.UnknownHostException: Unable to resolve host "analyseur-foot-api.onrender.com": No address associated with hostname') });
+    const erreur = await callApi("/api/x").catch((e: Error) => e);
+    expect(erreur).toBeInstanceOf(Error);
+    expect((erreur as Error).message).toBe("Impossible de joindre le serveur. Vérifiez votre connexion.");
+  });
+
+  test("délai dépassé : le message de délai l'emporte quelle que soit la forme de l'erreur d'annulation", async () => {
+    jest.useFakeTimers();
+    try {
+      (globalThis as any).fetch = jest.fn(
+        (_url: string, opts: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            opts.signal.addEventListener("abort", () => reject(new Error("Aborted"))); // ni TypeError ni AbortError
+          }),
+      );
+      const request = callApi("/api/x", { timeoutMs: 1000 });
+      const attendu = expect(request).rejects.toThrow(/trop de temps/);
+      jest.advanceTimersByTime(1001);
+      await attendu;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test("délai dépassé : message lisible", async () => {
     jest.useFakeTimers();
     try {
