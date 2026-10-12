@@ -1,7 +1,8 @@
 # Analyseur Foot Pro — site
 
-Application React (aussi empaquetée pour Android avec Capacitor) qui affiche les pronostics calculés par le serveur
-[analyseur-foot-backend](https://github.com/ibrahimmilanho6803-hue/analyseur-foot-backend).
+Application React qui affiche les pronostics calculés par le serveur
+[analyseur-foot-backend](https://github.com/ibrahimmilanho6803-hue/analyseur-foot-backend). Elle existe en deux versions : ce site
+(dossier `src/`) et une **vraie application Android en React Native** (dossier [`mobile/`](#application-mobile-react-native)).
 
 - **Top Matchs** : les 3 meilleurs matchs à venir, avec la cote combinée *estimée*.
 - **Mon coupon** : saisie de sélections, analyse par le serveur (modèle statistique relu par l'IA), probabilité de chaque sélection et du coupon.
@@ -50,7 +51,75 @@ npm test            # tests du site (faux serveur, aucun appel réseau)
 CI=true npm run build   # la construction doit passer sans avertissement
 ```
 
-## Reconstruire l'application Android
+## Application mobile (React Native)
+
+Le dossier `mobile/` contient l'application **Analyseur Foot Pro** pour Android, écrite en React Native (Expo SDK 57, TypeScript).
+Elle fait la même chose que le site — Top Matchs, Mon coupon, Auto, Historique, suggestions de clubs, analyse en deux temps — avec
+la même logique et le même serveur, et ne contient aucune clé secrète. Les quatre onglets sont en bas de l'écran, à portée du
+pouce ; le bouton « retour » d'Android ramène à « Mon coupon » avant de quitter l'application. L'historique est gardé sur le
+téléphone (mêmes clés de stockage que le site : `coupon-pronostics` et `coupon-clubs`).
+
+**Installer l'application sur un téléphone Android**
+
+1. Ouvrir sur le téléphone le lien de téléchargement, qui ne change jamais :
+   <https://github.com/ibrahimmilanho6803-hue/analyseur-foot-web/releases/download/apk-latest/analyseur-foot-pro.apk>
+2. Ouvrir le fichier téléchargé et autoriser l'installation depuis cette source si Android le demande (réglage « Installer des
+   applications inconnues » pour le navigateur utilisé). Android Play Protect peut afficher un avertissement pour une application
+   qui ne vient pas du Play Store : choisir « Installer quand même ».
+3. Pour **partager** l'application : envoyer le même lien (ou le fichier `.apk`) à n'importe qui. Pour **mettre à jour**, il suffit
+   de réinstaller le nouvel APK par-dessus : l'historique enregistré est conservé.
+
+L'application s'installe à côté de l'ancienne version Capacitor (identifiant `com.analyseur.footpro` contre `com.analyseur.foot`) ;
+l'ancienne ne sait plus analyser (voir plus bas) et peut être désinstallée.
+
+**iPhone** : l'application native n'est pas fournie (il faut un compte Apple Developer payant). Le site fonctionne très bien sur
+iPhone : ouvrir <https://analyseur-foot-web.vercel.app> dans Safari, puis « Partager » ▸ « Sur l'écran d'accueil ».
+
+**Comment l'APK est construit**
+
+Le workflow GitHub Actions [`APK Android`](.github/workflows/apk-android.yml) exécute les tests, génère le projet Android
+(`npx expo prebuild`, le dossier `mobile/android/` n'est jamais écrit à la main ni versionné), compile l'APK et le nomme
+`analyseur-foot-pro.apk`.
+
+- Sur une demande de fusion (*pull request*) : l'APK est téléchargeable 30 jours dans les **Artifacts** de l'exécution (onglet
+  Actions) ; rien n'est publié.
+- Sur la branche principale ou à la main (Actions ▸ « APK Android » ▸ Run workflow) : l'APK remplace celui de la version
+  « apk-latest » (Releases), d'où le lien stable ci-dessus. Le `versionCode` prend le numéro de l'exécution : il augmente à chaque
+  construction, ce qui permet de mettre à jour par-dessus.
+- **Signature** : l'APK est signé avec la clé de débogage standard d'Expo (elle est publique). C'est suffisant pour installer et
+  partager l'APK soi-même, et les mises à jour fonctionnent (même clé à chaque fois), mais **pas pour Google Play**, qui exige un
+  compte développeur (25 USD, une fois), une clé de publication privée et la validation de la politique sur les jeux d'argent.
+  Changer de clé plus tard obligerait chacun à désinstaller puis réinstaller l'application (l'historique enregistré serait perdu) :
+  si l'application est amenée à être largement diffusée, il vaut mieux créer la clé privée (à stocker dans les *Secrets* GitHub, jamais
+  dans le dépôt, qui est public) **avant** la diffusion.
+
+**Développer**
+
+```
+cd mobile
+npm ci                 # installe exactement les versions de package-lock.json (Node 22 ou plus)
+npm test               # tests : logique et écrans (faux serveur, aucun appel réseau)
+npx tsc --noEmit       # vérification des types
+npx expo start         # lance l'application sur un téléphone avec Expo Go (QR code), pour essayer une modification
+```
+
+| Variable (au moment de la construction) | Rôle | Défaut |
+|---|---|---|
+| `EXPO_PUBLIC_API_URL` | Adresse du serveur. | `https://analyseur-foot-api.onrender.com` |
+
+Organisation : `src/api.ts` (appels au serveur, délais et messages d'erreur), `src/estimates.ts` (probabilités : jamais inventées),
+`src/suggest.ts` (suggestions de clubs), `src/hooks/useAnalyseur.ts` (tout l'état et les actions), `src/screens/` (un fichier par
+onglet), `src/components/` (champ de club, choix du pari, barre d'onglets), `src/theme.ts` (couleurs et polices, communes avec le
+site). Les polices (Oswald, JetBrains Mono, Inter) et les icônes sont embarquées dans l'application : elle n'a besoin d'Internet que
+pour interroger le serveur.
+
+**Limites communes au site et à l'application** : le serveur est partagé. Les analyses de tous les utilisateurs comptent dans la
+même limite quotidienne d'appels à l'IA et dans le même quota de la source de données ; chaque adresse IP (donc chaque réseau
+mobile) a aussi sa propre limite de demandes par minute. Quand une limite est atteinte, l'application affiche le message du serveur.
+
+## Ancienne application Android (Capacitor)
+
+> Remplacée par l'application React Native ci-dessus (`mobile/`). Ce projet est conservé pour mémoire.
 
 Le projet Android (`android/`, Capacitor 8) **embarque une copie du site** : il n'ouvre pas l'adresse Vercel. Une application installée
 avant une mise à jour du site garde donc l'ancien code tant qu'elle n'est pas reconstruite. Les anciennes versions appelaient la route
