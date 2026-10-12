@@ -65,7 +65,9 @@ téléphone (mêmes clés de stockage que le site : `coupon-pronostics` et `coup
    <https://github.com/ibrahimmilanho6803-hue/analyseur-foot-web/releases/download/apk-latest/analyseur-foot-pro.apk>
 2. Ouvrir le fichier téléchargé et autoriser l'installation depuis cette source si Android le demande (réglage « Installer des
    applications inconnues » pour le navigateur utilisé). Android Play Protect peut afficher un avertissement pour une application
-   qui ne vient pas du Play Store : choisir « Installer quand même ».
+   qui ne vient pas du Play Store : choisir « Installer quand même ». Sur certains Samsung (One UI 6.1 et plus), le « Bloqueur
+   automatique » (Réglages ▸ Sécurité et confidentialité) refuse toute installation hors Play Store : le désactiver le temps de
+   l'installation.
 3. Pour **partager** l'application : envoyer le même lien (ou le fichier `.apk`) à n'importe qui. Pour **mettre à jour**, il suffit
    de réinstaller le nouvel APK par-dessus : l'historique enregistré est conservé.
 
