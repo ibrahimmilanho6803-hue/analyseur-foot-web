@@ -1,7 +1,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { asCross, awaitsReview, callApi, crossLeagueNote, crossTotalNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, toEstimate } from "./AnalyseurCoupon";
+import { asCross, awaitsReview, callApi, crossLeagueNote, crossTotalNote, estimateProb, estimatesForChunk, fairOdds, fromTopMatch, mergeEstimates, refundTotalNote, survival, toEstimate } from "./AnalyseurCoupon";
+import { BASELINE_RATES, BASELINE_REFUND, BET_GROUPS, TYPES_PARI, canonicalLabel, isRefundable, refundRuleText } from "./betTypes";
 import { CATALOG } from "./testData";
 
 // ---------- Faux serveur : chaque appel est enregistré, aucun appel réseau réel ----------
@@ -61,14 +62,12 @@ const topEntry = (i, over = {}) => ({
 
 const topPayload = (over = {}) => ({
   fenetreHeures: 72,
-  objectifCote: 2.5,
   avertissement: "Cotes estimées (1 ÷ probabilité), sans marge de bookmaker : les cotes réelles proposées par un opérateur seront plus basses.",
   complet: true,
   donnees: { championnatsPrets: ["PL", "PD", "SA", "BL1", "FL1", "PPL", "DED", "BSA"] },
   topMatches: [topEntry(0), topEntry(1), topEntry(2)],
   coteTotale: "2.66",
   probabiliteCombinee: 37.6,
-  objectifCoteAtteint: true,
   ia: { statut: "ok", modele: "claude-sonnet-5-5" },
   ...over,
 });
@@ -96,6 +95,11 @@ const cross = (over = {}) => ({ championnat1: "Premier League", championnat2: "L
 // Une analyse de Ligue des champions : Arsenal (Premier League) reçoit le Real Madrid (Liga).
 const cupLeg = (over = {}) =>
   okLeg({ equipe1: "Arsenal", equipe2: "Real Madrid", competition: "UEFA Champions League", date: "2026-10-21T19:00:00.000Z", comparaisonEntreChampionnats: cross(), ...over });
+
+// Pari à ligne entière (« Plus de 2 buts ») : `probabilite` est celle de gagner, le remboursement est donné à part, comme par le serveur.
+const REFUND_RULE = "Si le match se termine avec exactement 2 buts, la mise est remboursée (ni gagnée, ni perdue).";
+const refundLeg = (over = {}) =>
+  okLeg({ typePari: "Plus de 2 buts", probabilite: 49.4, coteEstimee: 1.5, probabiliteRemboursement: 25.8, regleRemboursement: REFUND_RULE, ...over });
 
 async function openApp() {
   render(<App />);
@@ -1059,5 +1063,261 @@ describe("clubs de championnats différents", () => {
       await waitFor(() => expect(savedCatalog()).not.toBeNull());
       expect(savedCatalog().v).toBe(2);
     });
+  });
+});
+
+// ---------- Plus de limite de cote ----------
+describe("onglet Top Matchs : plus de limite de cote", () => {
+  test("la cote combinée est celle des paris les plus sûrs, et l'écran explique pourquoi elle est basse", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ topMatches: [topEntry(0, { probabilite: 97.1, coteEstimee: 1.03 })], coteTotale: "1.03", probabiliteCombinee: 97.1 }) }) });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getAllByText("97.1 %")).toHaveLength(2); // le pari du match, puis la probabilité combinée (un seul match)
+    expect(screen.getByText("1.03", { selector: "b" })).toBeInTheDocument();
+    expect(screen.getByText(/choisis pour leur fiabilité, quelle que soit leur cote/)).toBeInTheDocument();
+    expect(screen.queryByText(/Objectif de cote/)).not.toBeInTheDocument();
+  });
+
+  test("un serveur plus ancien qui parle encore d'objectif de cote : le site n'en dit rien", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: { ...topPayload(), objectifCote: 2.5, objectifCoteAtteint: false } }) });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.queryByText(/Objectif de cote/)).not.toBeInTheDocument();
+  });
+});
+
+describe("onglet Auto : plus de limite de cote", () => {
+  test("le texte d'aide parle du pari le plus fiable, quelle que soit sa cote, et plus d'une plage de probabilité", async () => {
+    installFetch({});
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Auto" }));
+    expect(screen.getByText(/le pari le plus fiable, c'est-à-dire le plus probable, quelle que soit sa cote/)).toBeInTheDocument();
+    expect(screen.queryByText(/55 %/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/88 %/)).not.toBeInTheDocument();
+  });
+
+  test("un pari très sûr (97 %) est accepté tel quel dans le coupon", async () => {
+    installFetch({
+      "POST /api/auto-coupon": () => ({
+        body: { resultats: [{ index: 0, ...okLeg({ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Plus de 0.5 buts", probabilite: 97.2, coteEstimee: 1.03 }) }], analyses: 1, probabiliteCombinee: 97.2, coteTotale: "1.03" },
+      }),
+    });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Auto" }));
+    userEvent.type(screen.getByLabelText("Équipe 1 du match à générer"), "Arsenal");
+    userEvent.type(screen.getByLabelText("Équipe 2 du match à générer"), "Chelsea");
+    userEvent.click(screen.getByRole("button", { name: /Ajouter/ }));
+    userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
+    await screen.findByText("Coupon (1 match)");
+    expect(screen.getAllByText("97 %")).toHaveLength(2); // la sélection et le total du coupon
+    expect(screen.getByText(/Cote équitable estimée : 1\.03/)).toBeInTheDocument();
+  });
+});
+
+// ---------- Liste complète des paris ----------
+describe("types de paris", () => {
+  test("102 paris du serveur, plus « Score exact » et « Autre », tous différents", () => {
+    expect(TYPES_PARI).toHaveLength(104);
+    expect(new Set(TYPES_PARI).size).toBe(104);
+    expect(TYPES_PARI.slice(-2)).toEqual(["Score exact", "Autre"]);
+  });
+
+  test("le menu propose tous les paris sauf « Autre », une seule fois, regroupés en neuf familles", () => {
+    const proposes = BET_GROUPS.flatMap((g) => g.types);
+    expect(new Set(proposes).size).toBe(proposes.length);
+    expect([...proposes].sort()).toEqual(TYPES_PARI.filter((t) => t !== "Autre").sort());
+    expect(BET_GROUPS.map((g) => [g.title, g.types.length])).toEqual([
+      ["Résultat du match", 6],
+      ["Total de buts du match", 14],
+      ["Les deux équipes marquent", 2],
+      ["Total de buts de l'équipe 1 (domicile)", 10],
+      ["Total de buts de l'équipe 2 (extérieur)", 10],
+      ["Résultat et total de buts du match", 28],
+      ["Au moins une équipe marque", 4],
+      ["Résultat et total de buts d'une équipe", 28],
+      ["Score", 1],
+    ]);
+  });
+
+  test("chaque pari a une probabilité moyenne de repli ; les anciens libellés sont convertis", () => {
+    for (const t of TYPES_PARI) expect(BASELINE_RATES[t]).toBeGreaterThan(0);
+    expect(canonicalLabel("Total buts 1.5 plus")).toBe("Plus de 1.5 buts");
+    expect(canonicalLabel("Victoire exterieur")).toBe("Victoire extérieur");
+  });
+
+  test("un pari à ligne entière a la même probabilité de gagner que la demi-ligne voisine (le remboursement est à part)", () => {
+    for (let n = 1; n <= 3; n++) {
+      expect(BASELINE_RATES[`Plus de ${n} ${n > 1 ? "buts" : "but"}`]).toBe(BASELINE_RATES[`Plus de ${n + 0.5} buts`]);
+      expect(BASELINE_RATES[`Moins de ${n} ${n > 1 ? "buts" : "but"}`]).toBe(BASELINE_RATES[`Moins de ${n - 0.5} buts`]);
+    }
+  });
+
+  test("14 paris à ligne entière, jamais « 0.5 » ni « 1.5 » : gagner + être remboursé reste une probabilité", () => {
+    const refundable = TYPES_PARI.filter(isRefundable);
+    expect(refundable).toHaveLength(14);
+    expect([...refundable].sort()).toEqual(Object.keys(BASELINE_REFUND).sort());
+    for (const t of refundable) {
+      expect(t).not.toMatch(/\.5/);
+      expect(BASELINE_RATES[t] + BASELINE_REFUND[t]).toBeLessThan(1);
+    }
+    expect(isRefundable("Plus de 2.5 buts")).toBe(false);
+    expect(isRefundable("Score exact")).toBe(false);
+  });
+
+  test("la règle de remboursement se lit sans le serveur : match entier ou équipe, au singulier comme au pluriel", () => {
+    expect(refundRuleText("Plus de 2 buts")).toBe(REFUND_RULE);
+    expect(refundRuleText("Moins de 1 but")).toBe("Si le match se termine avec exactement 1 but, la mise est remboursée (ni gagnée, ni perdue).");
+    expect(refundRuleText("Equipe domicile plus de 1 but")).toBe("Si l'équipe 1 (à domicile) marque exactement 1 but, la mise est remboursée (ni gagnée, ni perdue).");
+    expect(refundRuleText("Equipe extérieur moins de 2 buts")).toBe("Si l'équipe 2 (à l'extérieur) marque exactement 2 buts, la mise est remboursée (ni gagnée, ni perdue).");
+    for (const t of TYPES_PARI) expect(refundRuleText(t) !== null).toBe(isRefundable(t));
+  });
+
+  test("le menu « Type de pari » est en familles et renvoie le libellé exact du serveur", async () => {
+    const calls = installFetch({ "POST /api/analyze": () => ({ body: { legs: [okLeg({ typePari: "Victoire/nul domicile + Equipe domicile moins de 2.5 buts", probabilite: 53.2 })] } }) });
+    await openApp();
+    const menu = screen.getByLabelText("Type de pari");
+    expect(menu.querySelectorAll("optgroup")).toHaveLength(9);
+    expect(menu.querySelectorAll("option")).toHaveLength(103);
+    expect(within(menu).queryByRole("option", { name: "Autre" })).not.toBeInTheDocument();
+    await addMatch("Arsenal", "Chelsea", "Victoire/nul domicile + Equipe domicile moins de 2.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await screen.findAllByText("53 %");
+    expect(calls.filter((c) => c.path === "/api/analyze")[0].body.legs).toEqual([{ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Victoire/nul domicile + Equipe domicile moins de 2.5 buts" }]);
+  });
+});
+
+// ---------- Paris à ligne entière ----------
+describe("paris à ligne entière (remboursés si le total tombe pile sur la ligne) : fonctions pures", () => {
+  test("la réponse du serveur garde la probabilité de gagner, celle du remboursement et la règle", () => {
+    const e = toEstimate(refundLeg());
+    expect(e.p).toBeCloseTo(0.494, 5);
+    expect(e.push).toBeCloseTo(0.258, 5);
+    expect(e.refundRule).toBe(REFUND_RULE);
+  });
+
+  test("un pari ordinaire, un serveur plus ancien ou une valeur absurde : aucun remboursement, ou borné", () => {
+    expect(toEstimate(okLeg()).push).toBe(0);
+    expect(toEstimate(okLeg()).refundRule).toBeUndefined();
+    expect(toEstimate(okLeg({ probabiliteRemboursement: null, regleRemboursement: "  " })).push).toBe(0);
+    expect(toEstimate(okLeg({ regleRemboursement: "  " })).refundRule).toBeUndefined();
+    expect(toEstimate(refundLeg({ probabiliteRemboursement: -5 })).push).toBe(0);
+    expect(toEstimate(refundLeg({ probabiliteRemboursement: 250 })).push).toBe(0.99);
+    expect(toEstimate(refundLeg({ probabiliteRemboursement: "beaucoup" })).push).toBe(0);
+  });
+
+  test("chance de ne rien perdre et cote équitable : le remboursement fait monter l'une et baisser l'autre", () => {
+    const e = { p: 0.494, push: 0.258 };
+    expect(survival(e)).toBeCloseTo(0.752, 5);
+    expect(fairOdds(e)).toBeCloseTo(1.502, 3);
+    expect(survival({ p: 0.62 })).toBe(0.62);
+    expect(fairOdds({ p: 0.62 })).toBeCloseTo(1 / 0.62, 10);
+    expect(survival({ p: 0.98, push: 0.05 })).toBe(0.995);
+  });
+
+  test("sans analyse : moyenne générale de gagner et de remboursement ; l'historique n'est pas utilisé", () => {
+    const wins = Array.from({ length: 6 }, (_, i) => ({ id: `w${i}`, typePari: "Plus de 2 buts", statut: "gagne" }));
+    expect(estimateProb(wins, { id: "r", typePari: "Plus de 2 buts" }, {})).toMatchObject({ p: 0.49, source: "general", push: 0.26 });
+    const r = estimateProb([], { id: "r", typePari: "Plus de 2 buts" }, { r: toEstimate(refundLeg()) });
+    expect(r.source).toBe("analyse");
+    expect(r.push).toBeCloseTo(0.258, 5);
+    expect(estimateProb([], { id: "a", typePari: "Plus de 2.5 buts" }, {}).push).toBe(0);
+  });
+
+  test("un pari remboursé n'est ni gagné ni perdu : il ne compte pas dans l'historique d'un type de pari", () => {
+    const sel = { id: "a", typePari: "Plus de 1.5 buts" };
+    const mix = [
+      ...Array.from({ length: 2 }, (_, i) => ({ id: `w${i}`, typePari: "Plus de 1.5 buts", statut: "gagne" })),
+      ...Array.from({ length: 6 }, (_, i) => ({ id: `r${i}`, typePari: "Plus de 1.5 buts", statut: "rembourse" })),
+    ];
+    expect(estimateProb(mix, sel, {}).source).toBe("general");
+    expect(estimateProb([...mix, { id: "l", typePari: "Plus de 1.5 buts", statut: "perdu" }], sel, {})).toMatchObject({ source: "historique", n: 3 });
+  });
+
+  test("la note du total est au singulier ou au pluriel", () => {
+    expect(refundTotalNote(1)).toMatch(/^1 pari est à ligne entière : remboursé \(cote 1,00\)/);
+    expect(refundTotalNote(2)).toMatch(/^2 paris sont à ligne entière : remboursés \(cote 1,00\)/);
+  });
+});
+
+describe("paris à ligne entière : coupon et historique", () => {
+  test("avant l'analyse : la règle est déjà expliquée, sans pourcentage de remboursement inventé", async () => {
+    installFetch({});
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 2 buts");
+    expect(screen.getByText(REFUND_RULE)).toBeInTheDocument();
+    expect(screen.queryByText(/Remboursé dans/)).not.toBeInTheDocument();
+    expect(screen.getByText(/1 pari est à ligne entière : remboursé \(cote 1,00\)/)).toBeInTheDocument();
+  });
+
+  test("après l'analyse : chance de gagner, de remboursement, règle du serveur ; total et cote tiennent compte du remboursement", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [refundLeg(), okLeg({ equipe1: "Inter", equipe2: "Torino", probabilite: 80 })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 2 buts");
+    await addMatch("Inter", "Torino", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await screen.findByText("49 %"); // la chance de GAGNER ce pari
+    expect(screen.getByText(`Remboursé dans 26 % des cas. ${REFUND_RULE}`)).toBeInTheDocument();
+    // Chance de ne rien perdre : (49,4 % + 25,8 %) × 80 % = 60 % ; cote : (1 − 0,258) ÷ 0,494 × 1,25 = 1,88.
+    expect(screen.getByText("60 %")).toBeInTheDocument();
+    expect(screen.getByText(/Cote équitable estimée : 1\.88/)).toBeInTheDocument();
+    expect(screen.getByText(/Le pourcentage est la chance de ne rien perdre ; la cote suppose que tous les paris sont gagnés/)).toBeInTheDocument();
+    expect(screen.getByText(/Sélection la plus fragile : Arsenal vs Chelsea \(75 %\)\. Sans elle : 80 %\./)).toBeInTheDocument();
+  });
+
+  test("un pari ordinaire n'affiche ni règle ni note de remboursement", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [okLeg()] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 2.5 buts");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await screen.findAllByText("62 %");
+    expect(screen.queryByText(/rembours/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ligne entière/)).not.toBeInTheDocument();
+  });
+
+  const pronostic = (over = {}) => ({ id: "p1", couponId: "c1", equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Match nul", cote: null, matchDate: "2026-10-01", statut: "en_attente", date: "2026-10-02T12:00:00.000Z", ...over });
+  const seed = (list) => localStorage.setItem("coupon-pronostics", JSON.stringify(list));
+  const stored = () => JSON.parse(localStorage.getItem("coupon-pronostics"));
+
+  test("seul un pari à ligne entière propose « remboursé » ; il est enregistré, affiché « R », et ne fait pas perdre le coupon", async () => {
+    seed([
+      pronostic({ id: "r1", couponId: "c", typePari: "Plus de 2 buts" }),
+      pronostic({ id: "r2", couponId: "c", equipe1: "Inter", equipe2: "Torino", typePari: "Plus de 1.5 buts", statut: "gagne" }),
+      pronostic({ id: "r3", couponId: "d", equipe1: "Paris SG", equipe2: "Marseille", typePari: "Plus de 1.5 buts" }),
+    ]);
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Historique" }));
+    expect(screen.getAllByRole("button", { name: "Marquer comme gagné" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Marquer comme remboursé" })).toHaveLength(1);
+    userEvent.click(screen.getByRole("button", { name: "Marquer comme remboursé" }));
+    expect(await screen.findByText("Gagné")).toBeInTheDocument(); // un pari gagné, un remboursé : le coupon est gagné
+    expect(screen.getByText("R")).toBeInTheDocument();
+    expect(stored().find((p) => p.id === "r1").statut).toBe("rembourse");
+  });
+
+  test("tous les paris remboursés : le coupon est « Remboursé » ; un pari perdu l'emporte sur un remboursé", async () => {
+    seed([
+      pronostic({ id: "a", couponId: "c", typePari: "Plus de 2 buts", statut: "rembourse" }),
+      pronostic({ id: "b", couponId: "c", equipe1: "Inter", equipe2: "Torino", typePari: "Moins de 3 buts", statut: "rembourse" }),
+      pronostic({ id: "q1", couponId: "d", equipe1: "Paris SG", equipe2: "Marseille", typePari: "Plus de 1 but", statut: "rembourse", date: "2026-10-05T12:00:00.000Z" }),
+      pronostic({ id: "q2", couponId: "d", equipe1: "Real Madrid", equipe2: "Getafe", typePari: "Match nul", statut: "perdu", date: "2026-10-05T12:00:00.000Z" }),
+    ]);
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Historique" }));
+    expect(screen.getByText("Remboursé")).toBeInTheDocument();
+    expect(screen.getByText("Perdu")).toBeInTheDocument();
+  });
+
+  test("un pari remboursé ne compte ni dans la réussite ni dans les paris clôturés", async () => {
+    seed([
+      pronostic({ id: "a", couponId: "c1", typePari: "Plus de 2 buts", statut: "rembourse" }),
+      pronostic({ id: "b", couponId: "c2", statut: "gagne" }),
+      pronostic({ id: "c", couponId: "c3", statut: "perdu" }),
+      pronostic({ id: "d", couponId: "c4", statut: "en_attente" }),
+    ]);
+    await openApp();
+    expect(screen.getByText(/Réussite/)).toHaveTextContent("Réussite : 50 %"); // 1 gagné sur 2 réglés
+    expect(screen.getByText(/Clôturés/)).toHaveTextContent("Clôturés : 2");
   });
 });

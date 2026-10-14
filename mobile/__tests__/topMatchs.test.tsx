@@ -1,6 +1,7 @@
 import { fireEvent, screen } from "@testing-library/react-native";
 import { button, openApp, openTab, resetStorage } from "../test-support/app";
 import { installFetch } from "../test-support/fakeServer";
+import type { TopMatchesResponse } from "../src/types";
 import { CROSS_MESSAGE, cross, topEntry, topPayload } from "../test-support/fixtures";
 
 beforeEach(resetStorage);
@@ -56,11 +57,24 @@ describe("onglet Top Matchs", () => {
     expect(screen.getByText(/Certains championnats sont encore en cours de chargement/)).toBeOnTheScreen();
   });
 
-  test("objectif de cote non atteint : le dit sans l'enjoliver", async () => {
-    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ objectifCoteAtteint: false, topMatches: [topEntry(0)], coteTotale: "1.28", probabiliteCombinee: 78.4 }) }) });
+  test("plus aucune limite de cote : la cote combinée est celle des paris les plus sûrs, et l'écran explique pourquoi elle est basse", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ topMatches: [topEntry(0, { probabilite: 97.1, coteEstimee: 1.03 })], coteTotale: "1.03", probabiliteCombinee: 97.1 }) }) });
     await openApp();
     await openTab("Top Matchs");
-    await screen.findByText(/Objectif de cote \(2.5\) non atteint/);
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getAllByText("97.1 %")).toHaveLength(2); // le pari du match, puis la probabilité combinée (un seul match)
+    expect(screen.getByText(/Cote combinée estimée :/)).toHaveTextContent("Cote combinée estimée : 1.03");
+    expect(screen.getByText(/choisis pour leur fiabilité, quelle que soit leur cote/)).toBeOnTheScreen();
+    expect(screen.queryByText(/Objectif de cote/)).not.toBeOnTheScreen();
+  });
+
+  test("un serveur plus ancien qui parle encore d'objectif de cote : l'application n'en dit rien", async () => {
+    const old = { ...topPayload(), objectifCote: 2.5, objectifCoteAtteint: false } as TopMatchesResponse;
+    installFetch({ "GET /api/top-matches": () => ({ body: old }) });
+    await openApp();
+    await openTab("Top Matchs");
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.queryByText(/Objectif de cote/)).not.toBeOnTheScreen();
   });
 
   test("erreur du serveur : message clair et possibilité de réessayer", async () => {

@@ -62,14 +62,12 @@ export const topEntry = (i: number, over: Partial<TopMatch> = {}): TopMatch => (
 
 export const topPayload = (over: Partial<TopMatchesResponse> = {}): TopMatchesResponse => ({
   fenetreHeures: 72,
-  objectifCote: 2.5,
   avertissement: "Cotes estimées (1 ÷ probabilité), sans marge de bookmaker : les cotes réelles proposées par un opérateur seront plus basses.",
   complet: true,
   donnees: { championnatsPrets: ["PL", "PD", "SA", "BL1", "FL1", "PPL", "DED", "BSA"] },
   topMatches: [topEntry(0), topEntry(1), topEntry(2)],
   coteTotale: "2.66",
   probabiliteCombinee: 37.6,
-  objectifCoteAtteint: true,
   ia: { statut: "ok", modele: "claude-sonnet-5-5" },
   ...over,
 });
@@ -87,6 +85,11 @@ export const okLeg = (over: ApiLeg = {}): ApiLeg => ({
   ia: { statut: "ok", modele: "claude-sonnet-5-5" },
   ...over,
 });
+
+/** Pari à ligne entière (« Plus de 2 buts ») : `probabilite` est celle de gagner, le remboursement est donné à part, comme par le serveur. */
+export const REFUND_RULE = "Si le match se termine avec exactement 2 buts, la mise est remboursée (ni gagnée, ni perdue).";
+export const refundLeg = (over: ApiLeg = {}): ApiLeg =>
+  okLeg({ typePari: "Plus de 2 buts", probabilite: 49.4, coteEstimee: 1.5, probabiliteRemboursement: 25.8, regleRemboursement: REFUND_RULE, ...over });
 
 // Analyse en deux temps : réponse du modèle seul, puis réponse relue par l'IA.
 export const quick = (over: ApiLeg = {}): ApiLeg =>

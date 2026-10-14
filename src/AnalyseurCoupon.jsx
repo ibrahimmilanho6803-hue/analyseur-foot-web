@@ -1,62 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { Plus, Trash2, Check, X, AlertTriangle, TrendingUp, Zap, Star } from "lucide-react";
+import { Plus, Trash2, Check, X, RotateCcw, AlertTriangle, TrendingUp, Zap, Star } from "lucide-react";
 import TeamInput from "./TeamInput";
 import { T, inputStyle } from "./theme";
 import { buildIndex, canon } from "./suggest";
-
-// Types de paris reconnus par le serveur (mêmes libellés que l'API). « Autre » sert seulement à l'historique.
-const TYPES_PARI = [
-  "Victoire domicile",
-  "Victoire extérieur",
-  "Match nul",
-  "Victoire ou nul domicile",
-  "Victoire ou nul extérieur",
-  "Victoire domicile ou extérieur",
-  "Plus de 0.5 buts",
-  "Moins de 0.5 buts",
-  "Plus de 1.5 buts",
-  "Moins de 1.5 buts",
-  "Plus de 2.5 buts",
-  "Moins de 2.5 buts",
-  "Plus de 3.5 buts",
-  "Moins de 3.5 buts",
-  "Les deux équipes marquent",
-  "Les deux équipes ne marquent pas",
-  "Equipe domicile 0.5 buts plus",
-  "Equipe extérieur 0.5 buts plus",
-  "Equipe domicile 1.5 buts plus",
-  "Equipe extérieur 1.5 buts plus",
-  "Equipe domicile 2.5 buts plus",
-  "Equipe extérieur 2.5 buts plus",
-  "Victoire/nul domicile + 0.5 buts plus",
-  "Victoire/nul extérieur + 0.5 buts plus",
-  "Victoire/nul domicile + 1.5 buts plus",
-  "Victoire/nul extérieur + 1.5 buts plus",
-  "Victoire/nul domicile + 2.5 buts plus",
-  "Victoire/nul extérieur + 2.5 buts plus",
-  "Victoire domicile + 1.5 buts plus",
-  "Victoire extérieur + 1.5 buts plus",
-  "Victoire domicile + 2.5 buts plus",
-  "Victoire extérieur + 2.5 buts plus",
-  "Score exact",
-  "Autre",
-];
-
-// Probabilités moyennes d'un match de championnat : utilisées seulement tant qu'aucune analyse n'a été faite.
-const BASELINE_RATES = {
-  "Victoire domicile": 0.44, "Victoire extérieur": 0.28, "Match nul": 0.28,
-  "Victoire ou nul domicile": 0.72, "Victoire ou nul extérieur": 0.56, "Victoire domicile ou extérieur": 0.72,
-  "Plus de 0.5 buts": 0.92, "Moins de 0.5 buts": 0.08, "Plus de 1.5 buts": 0.75,
-  "Moins de 1.5 buts": 0.25, "Plus de 2.5 buts": 0.49, "Moins de 2.5 buts": 0.51,
-  "Plus de 3.5 buts": 0.27, "Moins de 3.5 buts": 0.73, "Les deux équipes marquent": 0.54,
-  "Les deux équipes ne marquent pas": 0.46, "Equipe domicile 0.5 buts plus": 0.78, "Equipe extérieur 0.5 buts plus": 0.68,
-  "Equipe domicile 1.5 buts plus": 0.44, "Equipe extérieur 1.5 buts plus": 0.32, "Equipe domicile 2.5 buts plus": 0.19,
-  "Equipe extérieur 2.5 buts plus": 0.11, "Victoire/nul domicile + 0.5 buts plus": 0.64, "Victoire/nul extérieur + 0.5 buts plus": 0.48,
-  "Victoire/nul domicile + 1.5 buts plus": 0.54, "Victoire/nul extérieur + 1.5 buts plus": 0.41, "Victoire/nul domicile + 2.5 buts plus": 0.33,
-  "Victoire/nul extérieur + 2.5 buts plus": 0.23, "Victoire domicile + 1.5 buts plus": 0.35, "Victoire extérieur + 1.5 buts plus": 0.21,
-  "Victoire domicile + 2.5 buts plus": 0.27, "Victoire extérieur + 2.5 buts plus": 0.16, "Score exact": 0.1,
-  "Autre": 0.4,
-};
+import { BASELINE_RATES, BASELINE_REFUND, BET_GROUPS, TYPES_PARI, canonicalLabel, isRefundable, refundRuleText } from "./betTypes";
 
 // Adresse du serveur : modifiable au moment de la construction avec REACT_APP_API_URL.
 const API_BASE = (process.env.REACT_APP_API_URL || "https://analyseur-foot-api.onrender.com").replace(/\/+$/, "");
@@ -110,6 +57,21 @@ export function crossTotalNote(count) {
     : "1 sélection oppose des clubs de championnats différents : son estimation est moins précise, le pourcentage combiné aussi.";
 }
 
+// Part des cas où la mise d'un pari à ligne entière (« plus de 2 buts ») est remboursée (0 à 0,99) ; 0 pour tous les autres paris et si le
+// serveur n'en dit rien. `probabilite`, elle, est toujours la probabilité de GAGNER.
+const refundShare = (raw) => (typeof raw === "number" && Number.isFinite(raw) ? Math.min(0.99, Math.max(0, raw / 100)) : 0);
+
+// Chance qu'un pari ne soit pas perdu : gagné, ou remboursé quand le total tombe pile sur la ligne.
+export const survival = (e) => Math.min(0.995, e.p + (e.push || 0));
+
+// Cote équitable d'un pari : la mise rendue en cas de remboursement fait baisser la cote, (1 − remboursement) ÷ probabilité de gagner.
+export const fairOdds = (e) => (1 - (e.push || 0)) / e.p;
+
+// Mise en garde sous le total du coupon : count paris à ligne entière, remboursés quand le total tombe pile sur la ligne.
+export function refundTotalNote(count) {
+  return `${count > 1 ? `${count} paris sont à ligne entière` : "1 pari est à ligne entière"} : ${count > 1 ? "remboursés" : "remboursé"} (cote 1,00) si le total tombe pile sur la ligne. Le pourcentage est la chance de ne rien perdre ; la cote suppose que tous les paris sont gagnés.`;
+}
+
 // Transforme la réponse du serveur pour une sélection. Sans analyse chiffrée, p vaut null : aucune probabilité n'est inventée.
 export function toEstimate(r) {
   if (!r) return { p: null, message: "Pas de réponse du serveur pour cette sélection." };
@@ -130,6 +92,8 @@ export function toEstimate(r) {
       homeAway1: r.homeAway1,
       homeAway2: r.homeAway2,
       crossLeague: asCross(r.comparaisonEntreChampionnats),
+      push: refundShare(r.probabiliteRemboursement),
+      refundRule: typeof r.regleRemboursement === "string" && r.regleRemboursement.trim() ? r.regleRemboursement.trim() : undefined,
     };
   }
   const sug = r.suggestions ? [...(r.suggestions.equipe1 || []), ...(r.suggestions.equipe2 || [])].slice(0, 4) : [];
@@ -227,12 +191,9 @@ export function useTeamCatalog() {
   return { index: state.index, complete: state.complete, refresh };
 }
 
-// Libellés d'anciennes versions : l'historique déjà enregistré continue de compter.
-const LEGACY_LABELS = { "Total buts 1.5 plus": "Plus de 1.5 buts", "Victoire exterieur": "Victoire extérieur" };
-const canonicalLabel = (label) => LEGACY_LABELS[label] || label;
-
 function historicalRate(pronostics, typePari) {
-  const items = pronostics.filter((p) => canonicalLabel(p.typePari) === typePari && p.statut !== "en_attente");
+  // Seuls les paris gagnés ou perdus comptent : un pari en attente ou remboursé n'apprend rien sur la réussite.
+  const items = pronostics.filter((p) => canonicalLabel(p.typePari) === typePari && (p.statut === "gagne" || p.statut === "perdu"));
   if (items.length < 3) return null;
   return { rate: items.filter((p) => p.statut === "gagne").length / items.length, n: items.length };
 }
@@ -241,11 +202,13 @@ function historicalRate(pronostics, typePari) {
 // moyenne, car trois paris gagnés ne prouvent rien) ; sinon la moyenne générale du type de pari.
 export function estimateProb(pronostics, sel, aiEstimates) {
   const ai = aiEstimates[sel.id];
-  if (ai && typeof ai.p === "number") return { p: ai.p, source: "analyse", stats: ai.statsEquipe1 || ai.statsEquipe2 };
+  if (ai && typeof ai.p === "number") return { p: ai.p, source: "analyse", stats: ai.statsEquipe1 || ai.statsEquipe2, push: ai.push || 0, refundRule: ai.refundRule };
   const base = BASELINE_RATES[sel.typePari] ?? 0.4;
+  // Un pari à ligne entière garde sa moyenne générale : son taux de réussite d'après l'historique (hors remboursés) ne dit pas la chance de le gagner.
+  if (isRefundable(sel.typePari)) return { p: base, source: "general", push: BASELINE_REFUND[canonicalLabel(sel.typePari)] ?? 0 };
   const hist = historicalRate(pronostics, sel.typePari);
-  if (hist) return { p: (hist.rate * hist.n + base * 8) / (hist.n + 8), source: "historique", n: hist.n };
-  return { p: base, source: "general" };
+  if (hist) return { p: (hist.rate * hist.n + base * 8) / (hist.n + 8), source: "historique", n: hist.n, push: 0 };
+  return { p: base, source: "general", push: 0 };
 }
 
 // Associe chaque sélection envoyée à la réponse du serveur (même ordre). iaDown : sélections que l'IA n'a pas pu relire.
@@ -316,10 +279,11 @@ export default function App() {
   const [topError, setTopError] = useState(null);
   const [topAt, setTopAt] = useState(0);
 
+  // Un pari remboursé n'est ni gagné ni perdu : il ne compte ni dans la réussite ni dans les paris clôturés.
   const stats = useMemo(() => {
-    const closed = pronostics.filter((p) => p.statut !== "en_attente");
+    const closed = pronostics.filter((p) => p.statut === "gagne" || p.statut === "perdu");
     const wins = closed.filter((p) => p.statut === "gagne").length;
-    return { rate: closed.length > 0 ? Math.round((wins / closed.length) * 100) : null, closedCount: closed.length, pending: pronostics.length - closed.length };
+    return { rate: closed.length > 0 ? Math.round((wins / closed.length) * 100) : null, closedCount: closed.length, pending: pronostics.filter((p) => p.statut === "en_attente").length };
   }, [pronostics]);
 
   const coupons = useMemo(() => {
@@ -336,17 +300,21 @@ export default function App() {
       const failed = Boolean(ai) && ai.p === null;
       return { sel, ...est, failed, message: failed ? ai.message : undefined };
     });
-    const combined = evals.reduce((acc, e) => acc * e.p, 1);
-    const weakest = [...evals].sort((a, b) => a.p - b.p)[0];
+    // Chance de ne rien perdre : un pari à ligne entière est gagné ou remboursé (survival), les autres sont gagnés (p).
+    const combined = evals.reduce((acc, e) => acc * survival(e), 1);
+    // Cote équitable du coupon si tous les paris sont gagnés ; refundLegs : paris à ligne entière du coupon.
+    const odds = evals.reduce((acc, e) => acc * fairOdds(e), 1);
+    const refundLegs = evals.filter((e) => (e.push || 0) > 0).length;
+    const weakest = [...evals].sort((a, b) => survival(a) - survival(b))[0];
     const withoutWeakest = evals.filter((e) => e.sel.id !== weakest.sel.id);
-    const combinedWithout = withoutWeakest.length > 0 ? withoutWeakest.reduce((acc, e) => acc * e.p, 1) : null;
+    const combinedWithout = withoutWeakest.length > 0 ? withoutWeakest.reduce((acc, e) => acc * survival(e), 1) : null;
     // pending : sélections sans analyse chiffrée du serveur (le pourcentage affiché n'est alors qu'indicatif).
     const pending = evals.filter((e) => e.source !== "analyse").length;
     const keys = draft.map((sel) => matchKey(sel, aiEstimates[sel.id]));
     const sameMatch = new Set(keys).size < keys.length;
     // Sélections dont les deux clubs viennent de championnats différents : leur estimation est moins précise, et le total aussi.
     const crossCount = evals.filter((e) => !e.failed && e.source === "analyse" && aiEstimates[e.sel.id] && aiEstimates[e.sel.id].crossLeague).length;
-    return { evals, combined, weakest, combinedWithout, pending, sameMatch, crossCount };
+    return { evals, combined, odds, refundLegs, weakest, combinedWithout, pending, sameMatch, crossCount };
   }, [draft, pronostics, aiEstimates]);
 
   const addToDraft = () => {
@@ -411,8 +379,6 @@ export default function App() {
       setTopMeta({
         coteTotale: data.coteTotale,
         probabiliteCombinee: data.probabiliteCombinee,
-        objectifCoteAtteint: data.objectifCoteAtteint,
-        objectifCote: data.objectifCote,
         avertissement: data.avertissement,
         avertissementDonnees: data.avertissementDonnees,
         message: data.message,
@@ -573,7 +539,7 @@ export default function App() {
                   <span>Cote combinée estimée : <b style={{ color: T.gold }}>{topMeta.coteTotale}</b></span>
                   <span>Probabilité combinée : <b>{topMeta.probabiliteCombinee} %</b></span>
                 </div>
-                {topMeta.objectifCoteAtteint === false && <div style={{ color: T.chalkDim, fontSize: 11, marginTop: 4 }}>Objectif de cote ({topMeta.objectifCote}) non atteint avec les matchs disponibles.</div>}
+                <div style={{ color: T.chalkDim, fontSize: 11, marginTop: 4 }}>Ces paris sont choisis pour leur fiabilité, quelle que soit leur cote : plus un pari est sûr, plus sa cote est basse.</div>
                 {topMeta.avertissement && <div style={{ color: T.chalkDim, fontSize: 10, marginTop: 4 }}>{topMeta.avertissement}</div>}
               </div>
             )}
@@ -628,6 +594,9 @@ export default function App() {
                 const name1 = (detailed && aiData.equipe1) || sel.equipe1;
                 const name2 = (detailed && aiData.equipe2) || sel.equipe2;
                 const typedDiffers = detailed && (nameDiffers(sel.equipe1, name1) || nameDiffers(sel.equipe2, name2));
+                // Pari à ligne entière : la règle du remboursement (celle du serveur, avec les noms des équipes, une fois le pari analysé).
+                const refundRule = isRefundable(sel.typePari) ? (ev && ev.refundRule) || (detailed && aiData.refundRule) || refundRuleText(sel.typePari) : null;
+                const refundPart = ev && !ev.failed && ev.source === "analyse" ? ev.push || 0 : 0;
                 return (
                   <div key={sel.id} style={{ border: `1px solid ${T.line}`, borderRadius: 8, padding: "10px", marginBottom: 6 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
@@ -638,6 +607,7 @@ export default function App() {
                         {typedDiffers && <div style={{ color: T.chalkDim, fontSize: 10 }}>Saisi : {sel.equipe1} – {sel.equipe2}</div>}
                         {ev && !ev.failed && ev.source === "historique" && <div style={{ color: T.chalkDim, fontSize: 10 }}>Estimation d'après votre historique ({ev.n} paris), pas encore analysé</div>}
                         {ev && !ev.failed && ev.source === "general" && <div style={{ color: T.chalkDim, fontSize: 10 }}>Moyenne générale de ce pari, pas encore analysé</div>}
+                        {refundRule && <div style={{ color: T.chalkDim, fontSize: 10 }}>{`${refundPart > 0 ? `Remboursé dans ${Math.round(refundPart * 100)} % des cas. ` : ""}${refundRule}`}</div>}
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                         {ev && (ev.failed
@@ -693,7 +663,7 @@ export default function App() {
                     {analysis.pending > 0
                       ? <div style={{ display: "inline-block", padding: "4px 14px", borderRadius: 20, border: `1px solid ${T.chalkDim}`, color: T.chalkDim, fontWeight: 600, fontSize: 12 }}>Estimation indicative</div>
                       : <div style={{ display: "inline-block", padding: "4px 14px", borderRadius: 20, background: verdict(analysis.combined).color, color: T.bgDeep, fontWeight: 600, fontSize: 12 }}>{verdict(analysis.combined).label}</div>}
-                    {analysis.pending === 0 && <div style={{ fontSize: 11, color: T.chalkDim, marginTop: 6 }}>Cote équitable estimée : {(1 / analysis.combined).toFixed(2)} (sans marge de bookmaker : les cotes réelles seront plus basses)</div>}
+                    {analysis.pending === 0 && <div style={{ fontSize: 11, color: T.chalkDim, marginTop: 6 }}>Cote équitable estimée : {analysis.odds.toFixed(2)} (sans marge de bookmaker : les cotes réelles seront plus basses)</div>}
                   </div>
                   {analysis.pending > 0 && (
                     <div style={noteStyle(T.gold)}><AlertTriangle size={14} style={{ flexShrink: 0 }}/><span>{analysis.pending > 1 ? `${analysis.pending} sélections n'ont` : "1 sélection n'a"} pas d'analyse chiffrée : le pourcentage est indicatif. Appuyez sur « Analyser ».</span></div>
@@ -704,9 +674,12 @@ export default function App() {
                   {analysis.crossCount > 0 && (
                     <div style={noteStyle(T.gold)}><AlertTriangle size={14} style={{ flexShrink: 0 }}/><span>{crossTotalNote(analysis.crossCount)}</span></div>
                   )}
+                  {analysis.refundLegs > 0 && (
+                    <div style={noteStyle(T.gold)}><AlertTriangle size={14} style={{ flexShrink: 0 }}/><span>{refundTotalNote(analysis.refundLegs)}</span></div>
+                  )}
                   {analysis.pending === 0 && draft.length > 1 && analysis.combinedWithout !== null && (
                     <div style={{ fontSize: 11, color: T.chalkDim, marginTop: 8, textAlign: "center" }}>
-                      Sélection la plus fragile : {analysis.weakest.sel.equipe1} vs {analysis.weakest.sel.equipe2} ({Math.round(analysis.weakest.p * 100)} %). Sans elle : {Math.round(analysis.combinedWithout * 100)} %.
+                      Sélection la plus fragile : {analysis.weakest.sel.equipe1} vs {analysis.weakest.sel.equipe2} ({Math.round(survival(analysis.weakest) * 100)} %). Sans elle : {Math.round(analysis.combinedWithout * 100)} %.
                     </div>
                   )}
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
@@ -731,7 +704,11 @@ export default function App() {
               <TeamInput label="Équipe 2 (à l'extérieur)" placeholder="Équipe 2" value={form.equipe2} onChange={(v) => setForm((f) => ({ ...f, equipe2: v }))} index={catalog.index} complete={catalog.complete} onFocus={catalog.refresh} />
             </div>
             <select aria-label="Type de pari" value={form.typePari} onChange={(e) => setForm({ ...form, typePari: e.target.value })} style={{ ...inputStyle(), width: "100%", marginBottom: 8 }}>
-              {TYPES_PARI.map((t) => <option key={t} value={t}>{t}</option>)}
+              {BET_GROUPS.map((group) => (
+                <optgroup key={group.title} label={group.title}>
+                  {group.types.map((t) => <option key={t} value={t}>{t}</option>)}
+                </optgroup>
+              ))}
             </select>
             <button onClick={addToDraft} style={{ width: "100%", padding: 12, background: "transparent", border: `2px dashed ${T.line}`, color: T.gold, borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
               <Plus size={16}/> Ajouter
@@ -750,7 +727,7 @@ export default function App() {
         <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 10, padding: 14 }}>
           <div style={sectionTitle}>Génération automatique</div>
           <div style={{ fontSize: 12, color: T.chalkDim, marginBottom: 10 }}>
-            Saisissez des matchs : le serveur choisit pour chacun le pari le plus sûr dont la probabilité reste intéressante (entre 55 % et 88 %). L'équipe 1 reçoit, l'équipe 2 se déplace. Les deux clubs peuvent venir de championnats différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
+            Saisissez des matchs : le serveur choisit pour chacun le pari le plus fiable, c'est-à-dire le plus probable, quelle que soit sa cote (un pari très sûr a une cote très basse). L'équipe 1 reçoit, l'équipe 2 se déplace. Les deux clubs peuvent venir de championnats différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
             <TeamInput label="Équipe 1 du match à générer" placeholder="Équipe 1" value={genForm.equipe1} onChange={(v) => setGenForm((f) => ({ ...f, equipe1: v }))} index={catalog.index} complete={catalog.complete} onFocus={catalog.refresh} />
@@ -790,12 +767,13 @@ export default function App() {
           {coupons.length === 0 && <div style={{ textAlign: "center", color: T.chalkDim, padding: 20 }}>Aucun coupon</div>}
           {coupons.map((group) => {
             const allDone = group.every((p) => p.statut !== "en_attente");
-            const won = allDone && group.every((p) => p.statut === "gagne");
+            // Perdu dès qu'un pari est perdu ; remboursé si tous les paris l'ont été ; sinon gagné (un pari remboursé compte pour une cote de 1,00).
+            const result = !allDone ? { label: "En attente", color: T.gold } : couponResult(group);
             return (
-              <div key={group[0].couponId || group[0].id} style={{ border: `1px solid ${!allDone ? T.line : won ? T.win : T.loss}`, borderRadius: 8, padding: 10, marginBottom: 8 }}>
+              <div key={group[0].couponId || group[0].id} style={{ border: `1px solid ${allDone ? result.color : T.line}`, borderRadius: 8, padding: 10, marginBottom: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 11, color: T.chalkDim }}>
                   <span>{new Date(group[0].date).toLocaleDateString("fr-FR")}</span>
-                  <span style={{ color: !allDone ? T.gold : won ? T.win : T.loss, fontWeight: 600 }}>{!allDone ? "En attente" : won ? "Gagné" : "Perdu"}</span>
+                  <span style={{ color: result.color, fontWeight: 600 }}>{result.label}</span>
                 </div>
                 {group.map((p) => (
                   <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 0", borderBottom: `1px solid ${T.line}`, fontSize: 12 }}>
@@ -804,9 +782,10 @@ export default function App() {
                       <div style={{ display: "flex", gap: 4 }}>
                         <button aria-label="Marquer comme gagné" onClick={() => setSelStatut(p.id, "gagne")} style={iconBtn(T.win)}><Check size={12}/></button>
                         <button aria-label="Marquer comme perdu" onClick={() => setSelStatut(p.id, "perdu")} style={iconBtn(T.loss)}><X size={12}/></button>
+                        {isRefundable(p.typePari) && <button aria-label="Marquer comme remboursé" onClick={() => setSelStatut(p.id, "rembourse")} style={iconBtn(T.chalkDim)}><RotateCcw size={12}/></button>}
                       </div>
                     ) : (
-                      <span style={{ color: p.statut === "gagne" ? T.win : T.loss, fontWeight: 600 }}>{p.statut === "gagne" ? "V" : "X"}</span>
+                      <span style={{ color: p.statut === "gagne" ? T.win : p.statut === "rembourse" ? T.chalkDim : T.loss, fontWeight: 600 }}>{p.statut === "gagne" ? "V" : p.statut === "rembourse" ? "R" : "X"}</span>
                     )}
                     <button aria-label="Supprimer ce pari" onClick={() => removeSel(p.id)} style={{ background: "transparent", border: "none", color: T.chalkDim, marginLeft: 6, cursor: "pointer" }}><Trash2 size={11}/></button>
                   </div>
@@ -822,6 +801,13 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+// Résultat d'un coupon dont tous les paris sont réglés.
+function couponResult(group) {
+  if (group.some((p) => p.statut === "perdu")) return { label: "Perdu", color: T.loss };
+  if (group.every((p) => p.statut === "rembourse")) return { label: "Remboursé", color: T.chalkDim };
+  return { label: "Gagné", color: T.win };
 }
 
 function iconBtn(color) {

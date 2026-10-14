@@ -108,3 +108,54 @@ describe("onglet Historique", () => {
     expect(screen.getByText("Aucun coupon")).toBeOnTheScreen();
   });
 });
+
+describe("paris à ligne entière : remboursés", () => {
+  const refundPair = (overA: Record<string, unknown> = {}, overB: Record<string, unknown> = {}) => [
+    pronostic({ id: "r1", couponId: "c", equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Plus de 2 buts", ...overA }),
+    pronostic({ id: "r2", couponId: "c", equipe1: "Inter", equipe2: "Torino", typePari: "Plus de 1.5 buts", ...overB }),
+  ];
+
+  test("seul un pari à ligne entière propose « remboursé »", async () => {
+    await seedHistory(refundPair());
+    await openApp();
+    await openTab("Historique");
+    expect(screen.getAllByRole("button", { name: "Marquer comme gagné" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Marquer comme perdu" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Marquer comme remboursé" })).toHaveLength(1); // « Plus de 2 buts » seulement
+  });
+
+  test("un pari remboursé est enregistré, affiché « R », et ne fait pas perdre le coupon", async () => {
+    await seedHistory(refundPair({}, { statut: "gagne" }));
+    await openApp();
+    await openTab("Historique");
+    await fireEvent.press(button("Marquer comme remboursé"));
+    expect(await screen.findByText("Gagné")).toBeOnTheScreen(); // un pari gagné, un remboursé : le coupon est gagné
+    expect(screen.getByText("R")).toBeOnTheScreen();
+    expect(screen.getByText("V")).toBeOnTheScreen();
+    await waitFor(async () => expect((await savedHistory()).find((p: { id: string }) => p.id === "r1").statut).toBe("rembourse"));
+  });
+
+  test("tous les paris remboursés : le coupon est « Remboursé » ; un pari perdu l'emporte sur un remboursé", async () => {
+    await seedHistory([
+      ...refundPair({ statut: "rembourse" }, { typePari: "Moins de 3 buts", statut: "rembourse" }),
+      pronostic({ id: "q1", couponId: "d", equipe1: "Paris SG", equipe2: "Marseille", typePari: "Plus de 1 but", statut: "rembourse", date: "2026-10-05T12:00:00.000Z" }),
+      pronostic({ id: "q2", couponId: "d", equipe1: "Real Madrid", equipe2: "Getafe", typePari: "Match nul", statut: "perdu", date: "2026-10-05T12:00:00.000Z" }),
+    ]);
+    await openApp();
+    await openTab("Historique");
+    expect(screen.getByText("Remboursé")).toBeOnTheScreen(); // le coupon c
+    expect(screen.getByText("Perdu")).toBeOnTheScreen(); // le coupon d
+  });
+
+  test("un pari remboursé ne compte ni dans la réussite ni dans les paris clôturés", async () => {
+    await seedHistory([
+      pronostic({ id: "a", couponId: "c1", typePari: "Plus de 2 buts", statut: "rembourse" }),
+      pronostic({ id: "b", couponId: "c2", typePari: "Match nul", statut: "gagne" }),
+      pronostic({ id: "c", couponId: "c3", typePari: "Match nul", statut: "perdu" }),
+      pronostic({ id: "d", couponId: "c4", typePari: "Match nul", statut: "en_attente" }),
+    ]);
+    await openApp();
+    expect(screen.getByText(/Réussite/)).toHaveTextContent("Réussite : 50 %"); // 1 gagné sur 2 réglés
+    expect(screen.getByText(/Clôturés/)).toHaveTextContent("Clôturés : 2");
+  });
+});

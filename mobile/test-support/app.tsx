@@ -3,6 +3,7 @@ import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { fireEvent, render, screen, within } from "@testing-library/react-native";
 import AnalyseurApp from "../src/AnalyseurApp";
+import { BET_GROUPS } from "../src/betTypes";
 import { CATALOG_VERSION } from "../src/storage";
 import { CATALOG } from "./fixtures";
 
@@ -20,9 +21,14 @@ export async function openTab(name: string) {
   await fireEvent.press(tab(name));
 }
 
-/** Choisit un type de pari dans la feuille du sélecteur. */
+/** Choisit un type de pari dans la feuille du sélecteur (en ouvrant d'abord sa famille si elle est repliée). */
 export async function chooseBet(bet: string) {
   await fireEvent.press(screen.getByRole("button", { name: /^Type de pari/ }));
+  if (!screen.queryByRole("radio", { name: bet })) {
+    const group = BET_GROUPS.find((g) => g.types.includes(bet));
+    if (!group) throw new Error(`type de pari inconnu : ${bet}`);
+    await fireEvent.press(await screen.findByRole("button", { name: group.title }));
+  }
   await fireEvent.press(await screen.findByRole("radio", { name: bet }));
 }
 

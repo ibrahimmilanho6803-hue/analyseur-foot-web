@@ -156,3 +156,30 @@ describe("onglet Auto : n'importe quel match", () => {
   });
 });
 
+
+describe("onglet Auto : plus de limite de cote", () => {
+  test("le texte d'aide parle du pari le plus fiable, quelle que soit sa cote, et plus d'une plage de probabilité", async () => {
+    installFetch({});
+    await openApp();
+    await openTab("Auto");
+    expect(screen.getByText(/le pari le plus fiable, c'est-à-dire le plus probable, quelle que soit sa cote/)).toBeOnTheScreen();
+    expect(screen.queryByText(/55 %/)).not.toBeOnTheScreen();
+    expect(screen.queryByText(/88 %/)).not.toBeOnTheScreen();
+  });
+
+  test("un pari très sûr (97 %) est accepté tel quel dans le coupon", async () => {
+    installFetch({
+      "POST /api/auto-coupon": () => ({
+        body: { resultats: [{ index: 0, ...okLeg({ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Plus de 0.5 buts", probabilite: 97.2, coteEstimee: 1.03 }) }], analyses: 1, probabiliteCombinee: 97.2, coteTotale: "1.03" },
+      }),
+    });
+    await openApp();
+    await openTab("Auto");
+    await typeAutoMatch("Arsenal", "Chelsea");
+    await fireEvent.press(button("Générer mon coupon"));
+    await screen.findByText("Coupon (1 match)");
+    expect(screen.getByText("Plus de 0.5 buts")).toBeOnTheScreen();
+    expect(screen.getAllByText("97 %")).toHaveLength(2); // la sélection et le total du coupon
+    expect(screen.getByText(/Cote équitable estimée : 1\.03/)).toBeOnTheScreen();
+  });
+});

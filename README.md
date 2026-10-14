@@ -4,12 +4,33 @@ Application React qui affiche les pronostics calculés par le serveur
 [analyseur-foot-backend](https://github.com/ibrahimmilanho6803-hue/analyseur-foot-backend). Elle existe en deux versions : ce site
 (dossier `src/`) et une **vraie application Android en React Native** (dossier [`mobile/`](#application-mobile-react-native)).
 
-- **Top Matchs** : les 3 meilleurs matchs à venir, avec la cote combinée *estimée*.
-- **Mon coupon** : saisie de sélections, analyse par le serveur (modèle statistique relu par l'IA), probabilité de chaque sélection et du coupon.
-- **Auto** : le serveur choisit le pari le plus probable de chaque match saisi.
+- **Top Matchs** : les 3 matchs à venir dont le pari est le plus fiable, avec la cote combinée *estimée*.
+- **Mon coupon** : saisie de sélections parmi **102 types de paris**, analyse par le serveur (modèle statistique relu par l'IA), probabilité de chaque sélection et du coupon.
+- **Auto** : le serveur choisit le pari le plus fiable (le plus probable) de chaque match saisi.
 - **N'importe quel match** : Mon coupon et Auto acceptent deux clubs du même championnat, de championnats différents (Ligue des
   champions, Ligue Europa, Ligue Conférence…) ou un club que seules les coupes d'Europe font connaître ([voir plus bas](#matchs-entre-championnats-ligue-des-champions)).
 - **Historique** : coupons enregistrés sur l'appareil (stockage local du navigateur).
+
+## Types de paris et paris sans limite de cote
+
+- **Aucune limite de cote.** « Top Matchs » et « Auto » ne cherchent plus une cote précise (l'ancien objectif de 2,5 est supprimé) ni une
+  plage de probabilité (l'ancienne plage de 55 à 88 % aussi) : ils proposent, pour chaque match, le pari **le plus probable** de tous les
+  types de paris, quelle que soit sa cote. Conséquence à connaître : plus un pari est sûr, plus sa cote est basse (une cote équitable de 1,02 à
+  1,10 est courante), et les opérateurs en proposent souvent de plus basses encore, voire pas du tout. Les cotes affichées sont des cotes
+  équitables (1 ÷ probabilité), sans marge de bookmaker. Les probabilités restent des estimations, jamais des certitudes.
+- **102 types de paris** (32 avant), regroupés en familles dans le sélecteur : résultat du match ; total de buts du match (plus / moins de
+  0,5 à 3,5 buts) ; les deux équipes marquent ; total de buts de l'équipe 1 (domicile) et de l'équipe 2 (extérieur) ; résultat et total de
+  buts du match (victoire ou victoire/nul de chaque équipe + plus / moins de N buts) ; « au moins une équipe plus de N buts » ; résultat et
+  total de buts d'une équipe (victoire ou victoire/nul + total de cette équipe). Les libellés sont **exactement ceux du serveur**
+  (`src/markets.js` côté serveur) : la liste du site (`src/betTypes.js`) et celle de l'application (`mobile/src/betTypes.ts`) doivent
+  rester identiques à la sienne, sinon le serveur répond « type de pari inconnu ».
+- **Paris à ligne entière** (« plus de 2 buts », « moins de 3 buts », « équipe 1 plus de 1 but »… 14 paris) : quand le nombre de buts tombe
+  *exactement* sur la ligne, la mise est **remboursée** (ni gagnée, ni perdue). Le serveur renvoie alors la probabilité de **gagner**
+  (`probabilite`), celle du remboursement (`probabiliteRemboursement`) et la règle (`regleRemboursement`). Le site et l'application les
+  affichent, comptent un pari remboursé comme « non perdu » dans la probabilité du coupon, calculent la cote équitable d'un pari
+  `(1 − remboursement) ÷ probabilité de gagner`, et proposent « Remboursé » dans l'historique (un pari remboursé n'entre ni dans la
+  réussite ni dans les paris clôturés ; un coupon dont tous les paris sont remboursés est « Remboursé »). Ces paris ne sont jamais choisis
+  automatiquement : on ne peut pas comparer leur fiabilité à celle d'un pari qui se gagne ou se perd.
 
 Le site ne contient aucune clé secrète et n'appelle jamais l'IA directement : tout passe par le serveur. Si une analyse est
 impossible (équipe inconnue, serveur indisponible…), le site affiche « ? » et la raison, il n'invente jamais de probabilité.

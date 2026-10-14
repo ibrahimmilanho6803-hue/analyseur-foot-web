@@ -65,6 +65,12 @@ export interface ApiLeg {
   suggestions?: Suggestions;
   ia?: IaInfo;
   comparaisonEntreChampionnats?: CrossLeague | null;
+  /** Cote équitable : (1 − remboursement) ÷ probabilité de gagner. */
+  coteEstimee?: number;
+  /** Pari à ligne entière (« plus de 2 buts ») : `probabilite` est celle de GAGNER ; ceci est la part des cas où la mise est remboursée (en %). */
+  probabiliteRemboursement?: number | null;
+  /** Règle de remboursement rédigée par le serveur, avec les noms des équipes. */
+  regleRemboursement?: string;
   [autre: string]: unknown;
 }
 
@@ -102,8 +108,6 @@ export interface TopMatchesResponse {
   topMatches?: TopMatch[];
   coteTotale?: string | number;
   probabiliteCombinee?: number;
-  objectifCoteAtteint?: boolean;
-  objectifCote?: number;
   avertissement?: string;
   avertissementDonnees?: string;
   message?: string;
@@ -118,8 +122,6 @@ export interface TopMatchesResponse {
 export interface TopMeta {
   coteTotale?: string | number;
   probabiliteCombinee?: number;
-  objectifCoteAtteint?: boolean;
-  objectifCote?: number;
   avertissement?: string;
   avertissementDonnees?: string;
   message?: string;
@@ -150,15 +152,23 @@ export interface Estimate {
   homeAway2?: HomeAway | null;
   /** Renseigné quand les deux clubs viennent de championnats différents. */
   crossLeague?: CrossLeague;
+  /** Pari à ligne entière : part des cas où la mise est remboursée (0 à 1). `p` reste la probabilité de gagner. */
+  push?: number;
+  /** Règle de remboursement rédigée par le serveur (avec les noms des équipes). */
+  refundRule?: string;
 }
 
 export type ProbSource = "analyse" | "historique" | "general";
 
 export interface ProbEstimate {
+  /** Probabilité de gagner le pari. */
   p: number;
   source: ProbSource;
   stats?: unknown;
   n?: number;
+  /** Pari à ligne entière : probabilité du remboursement de la mise (0 pour les autres paris). */
+  push?: number;
+  refundRule?: string;
 }
 
 /** Une sélection du coupon en préparation. */
@@ -178,7 +188,8 @@ export interface MatchToGenerate {
   matchDate: string;
 }
 
-export type Statut = "en_attente" | "gagne" | "perdu";
+/** « rembourse » : pari à ligne entière dont le total est tombé pile sur la ligne (ni gagné, ni perdu). */
+export type Statut = "en_attente" | "gagne" | "perdu" | "rembourse";
 
 /** Un pari enregistré dans l'historique du téléphone. */
 export interface Pronostic {

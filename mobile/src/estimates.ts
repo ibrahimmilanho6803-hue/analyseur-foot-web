@@ -1,8 +1,17 @@
 // Lecture des réponses du serveur et estimation de la probabilité d'une sélection (même logique que le site).
-import { BASELINE_RATES, canonicalLabel } from "./betTypes";
+import { BASELINE_RATES, BASELINE_REFUND, canonicalLabel, isRefundable } from "./betTypes";
 import type { ApiLeg, CrossLeague, Estimate, ProbEstimate, Pronostic, Selection, TopMatch } from "./types";
 
 export const clampP = (p: number): number => Math.min(0.99, Math.max(0.01, p));
+
+// Part des cas où la mise d'un pari à ligne entière est remboursée (0 à 0,99) ; 0 pour tous les autres paris et si le serveur n'en dit rien.
+const refundShare = (raw: unknown): number => (typeof raw === "number" && Number.isFinite(raw) ? Math.min(0.99, Math.max(0, raw / 100)) : 0);
+
+/** Chance qu'un pari ne soit pas perdu : gagné, ou remboursé quand le total tombe pile sur la ligne. */
+export const survival = (e: { p: number; push?: number }): number => Math.min(0.995, e.p + (e.push || 0));
+
+/** Cote équitable d'un pari : la mise rendue en cas de remboursement fait baisser la cote, (1 − remboursement) ÷ probabilité de gagner. */
+export const fairOdds = (e: { p: number; push?: number }): number => (1 - (e.push || 0)) / e.p;
 
 // Comparaison entre championnats renvoyée par le serveur (clubs de championnats différents) ; absente pour deux clubs du même championnat.
 export function asCross(raw: unknown): CrossLeague | undefined {
@@ -37,6 +46,8 @@ export function toEstimate(r: ApiLeg | null | undefined): Estimate {
       homeAway1: r.homeAway1,
       homeAway2: r.homeAway2,
       crossLeague: asCross(r.comparaisonEntreChampionnats),
+      push: refundShare(r.probabiliteRemboursement),
+      refundRule: typeof r.regleRemboursement === "string" && r.regleRemboursement.trim() ? r.regleRemboursement.trim() : undefined,
     };
   }
   const sug =r.suggestions ? [...(r.suggestions.equipe1 || []), ...(r.suggestions.equipe2 || [])].slice(0, 4) : [];
@@ -44,7 +55,8 @@ export function toEstimate(r: ApiLeg | null | undefined): Estimate {
 }
 
 function historicalRate(pronostics: Pick<Pronostic, "typePari" | "statut">[], typePari: string): { rate: number; n: number } | null {
-  const items = pronostics.filter((p) => canonicalLabel(p.typePari) === typePari && p.statut !== "en_attente");
+  // Seuls les paris gagnés ou perdus comptent : un pari en attente ou remboursé n'apprend rien sur la réussite.
+  const items = pronostics.filter((p) => canonicalLabel(p.typePari) === typePari && (p.statut === "gagne" || p.statut === "perdu"));
   if (items.length < 3) return null;
   return { rate: items.filter((p) => p.statut === "gagne").length / items.length, n: items.length };
 }
@@ -57,11 +69,13 @@ export function estimateProb(
   aiEstimates: Record<string, Estimate>,
 ): ProbEstimate {
   const ai = aiEstimates[sel.id];
-  if (ai && typeof ai.p === "number") return { p: ai.p, source: "analyse", stats: ai.statsEquipe1 || ai.statsEquipe2 };
+  if (ai && typeof ai.p === "number") return { p: ai.p, source: "analyse", stats: ai.statsEquipe1 || ai.statsEquipe2, push: ai.push || 0, refundRule: ai.refundRule };
   const base = BASELINE_RATES[sel.typePari] ?? 0.4;
+  // Un pari à ligne entière garde sa moyenne générale : son taux de réussite d'après l'historique (hors remboursés) ne dit pas la chance de le gagner.
+  if (isRefundable(sel.typePari)) return { p: base, source: "general", push: BASELINE_REFUND[canonicalLabel(sel.typePari)] ?? 0 };
   const hist = historicalRate(pronostics, sel.typePari);
-  if (hist) return { p: (hist.rate * hist.n + base * 8) / (hist.n + 8), source: "historique", n: hist.n };
-  return { p: base, source: "general" };
+  if (hist) return { p: (hist.rate * hist.n + base * 8) / (hist.n + 8), source: "historique", n: hist.n, push: 0 };
+  return { p: base, source: "general", push: 0 };
 }
 
 // Associe chaque sélection envoyée à la réponse du serveur (même ordre). iaDown : sélections que l'IA n'a pas pu relire.

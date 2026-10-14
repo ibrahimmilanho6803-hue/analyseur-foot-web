@@ -1,8 +1,9 @@
 import React from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { isRefundable, refundRuleText } from "../betTypes";
 import BetTypePicker from "../components/BetTypePicker";
 import TeamInput from "../components/TeamInput";
-import { crossLeagueNote } from "../estimates";
+import { crossLeagueNote, survival } from "../estimates";
 import { confidenceLabel, formatDate, nameDiffers } from "../format";
 import type { Controller, CouponAnalysis, Evaluation } from "../hooks/useAnalyseur";
 import { F, T, alpha } from "../theme";
@@ -14,6 +15,10 @@ function verdict(p: number): { label: string; color: string } {
 }
 
 const pct = (p: number) => `${Math.round(p * 100)} %`;
+
+// Paris à ligne entière du coupon : remboursés quand le total tombe pile sur la ligne.
+const refundTotalNote = (count: number): string =>
+  `${count > 1 ? `${count} paris sont à ligne entière` : "1 pari est à ligne entière"} : ${count > 1 ? "remboursés" : "remboursé"} (cote 1,00) si le total tombe pile sur la ligne. Le pourcentage est la chance de ne rien perdre ; la cote suppose que tous les paris sont gagnés.`;
 
 const crossTotalNote = (count: number): string =>
   count > 1
@@ -45,6 +50,9 @@ function SelectionRow({ sel, ev, ai, showDetails, onRemove }: { sel: Selection; 
   const [name1, name2] = shownNames(sel, ai);
   const typedDiffers = detailed && (nameDiffers(sel.equipe1, name1) || nameDiffers(sel.equipe2, name2));
   const headline = [ai?.competition, formatDate(ai?.date)].filter(Boolean).join(" · ");
+  // Pari à ligne entière : la règle du remboursement (celle du serveur, avec les noms des équipes, une fois le pari analysé).
+  const refundRule = isRefundable(sel.typePari) ? (ev && ev.refundRule) || (detailed && ai?.refundRule) || refundRuleText(sel.typePari) : null;
+  const refundShare = ev && !ev.failed && ev.source === "analyse" ? ev.push || 0 : 0;
   return (
     <View style={s.sel}>
       <View style={s.selTop}>
@@ -57,6 +65,7 @@ function SelectionRow({ sel, ev, ai, showDetails, onRemove }: { sel: Selection; 
           {typedDiffers ? <Txt style={s.selSmall}>{`Saisi : ${sel.equipe1} – ${sel.equipe2}`}</Txt> : null}
           {ev && !ev.failed && ev.source === "historique" ? <Txt style={s.selSmall}>{`Estimation d'après votre historique (${ev.n} paris), pas encore analysé`}</Txt> : null}
           {ev && !ev.failed && ev.source === "general" ? <Txt style={s.selSmall}>Moyenne générale de ce pari, pas encore analysé</Txt> : null}
+          {refundRule ? <Txt style={s.selSmall}>{`${refundShare > 0 ? `Remboursé dans ${pct(refundShare)} des cas. ` : ""}${refundRule}`}</Txt> : null}
         </View>
         <View style={s.selRight}>
           {ev ? (
@@ -122,7 +131,7 @@ function Total({ c, analysis }: { c: Controller; analysis: CouponAnalysis }) {
           </View>
         )}
         {!indicative ? (
-          <Txt style={s.fairOdds}>Cote équitable estimée : {(1 / analysis.combined).toFixed(2)} (sans marge de bookmaker : les cotes réelles seront plus basses)</Txt>
+          <Txt style={s.fairOdds}>Cote équitable estimée : {analysis.odds.toFixed(2)} (sans marge de bookmaker : les cotes réelles seront plus basses)</Txt>
         ) : null}
       </View>
       {indicative ? (
@@ -130,9 +139,10 @@ function Total({ c, analysis }: { c: Controller; analysis: CouponAnalysis }) {
       ) : null}
       {analysis.sameMatch ? <Note>Plusieurs paris portent sur le même match : ils sont liés entre eux, le pourcentage combiné peut être inexact.</Note> : null}
       {crossCount > 0 ? <Note>{crossTotalNote(crossCount)}</Note> : null}
+      {analysis.refundLegs > 0 ? <Note>{refundTotalNote(analysis.refundLegs)}</Note> : null}
       {!indicative && draft.length > 1 && analysis.combinedWithout !== null ? (
         <Txt style={s.fragile}>
-          Sélection la plus fragile : {weak1} vs {weak2} ({pct(analysis.weakest.p)}). Sans elle : {pct(analysis.combinedWithout)}.
+          Sélection la plus fragile : {weak1} vs {weak2} ({pct(survival(analysis.weakest))}). Sans elle : {pct(analysis.combinedWithout)}.
         </Txt>
       ) : null}
       <View style={s.totalActions}>

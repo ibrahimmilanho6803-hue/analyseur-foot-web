@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { callApi } from "../api";
 import { TYPES_PARI } from "../betTypes";
-import { awaitsReview, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, toEstimate } from "../estimates";
+import { awaitsReview, estimateProb, estimatesForChunk, fairOdds, fromTopMatch, mergeEstimates, survival, toEstimate } from "../estimates";
 import { MAX_LEGS_PER_CALL, matchKey, todayISO, uid } from "../format";
 import type {
   AnalyzeResponse,
@@ -39,7 +39,12 @@ export type Evaluation = ProbEstimate & { sel: Selection; failed: boolean; messa
 
 export interface CouponAnalysis {
   evals: Evaluation[];
+  /** Chance qu'aucun pari du coupon ne soit perdu (un pari à ligne entière remboursé n'est pas perdu). */
   combined: number;
+  /** Cote équitable du coupon si tous les paris sont gagnés (sans marge de bookmaker). */
+  odds: number;
+  /** Nombre de paris à ligne entière du coupon (remboursés si le total tombe pile sur la ligne). */
+  refundLegs: number;
   weakest: Evaluation;
   combinedWithout: number | null;
   /** Sélections sans analyse chiffrée du serveur : le pourcentage affiché n'est alors qu'indicatif. */
@@ -72,10 +77,11 @@ export function useAnalyseur() {
   const [topError, setTopError] = useState<string | null>(null);
   const [topAt, setTopAt] = useState(0);
 
+  // Un pari remboursé n'est ni gagné ni perdu : il ne compte ni dans la réussite ni dans les paris clôturés.
   const stats = useMemo(() => {
-    const closed = pronostics.filter((p) => p.statut !== "en_attente");
+    const closed = pronostics.filter((p) => p.statut === "gagne" || p.statut === "perdu");
     const wins = closed.filter((p) => p.statut === "gagne").length;
-    return { rate: closed.length > 0 ? Math.round((wins / closed.length) * 100) : null, closedCount: closed.length, pending: pronostics.length - closed.length };
+    return { rate: closed.length > 0 ? Math.round((wins / closed.length) * 100) : null, closedCount: closed.length, pending: pronostics.filter((p) => p.statut === "en_attente").length };
   }, [pronostics]);
 
   // Historique regroupé par coupon, le plus récent d'abord.
@@ -97,14 +103,17 @@ export function useAnalyseur() {
       const failed = Boolean(ai) && ai.p === null;
       return { sel, ...est, failed, message: failed ? ai.message : undefined };
     });
-    const combined = evals.reduce((acc, e) => acc * e.p, 1);
-    const weakest = [...evals].sort((a, b) => a.p - b.p)[0];
+    // Chance de ne rien perdre : un pari à ligne entière est gagné ou remboursé (survival), les autres sont gagnés (p).
+    const combined = evals.reduce((acc, e) => acc * survival(e), 1);
+    const odds = evals.reduce((acc, e) => acc * fairOdds(e), 1);
+    const refundLegs = evals.filter((e) => (e.push || 0) > 0).length;
+    const weakest = [...evals].sort((a, b) => survival(a) - survival(b))[0];
     const withoutWeakest = evals.filter((e) => e.sel.id !== weakest.sel.id);
-    const combinedWithout = withoutWeakest.length > 0 ? withoutWeakest.reduce((acc, e) => acc * e.p, 1) : null;
+    const combinedWithout = withoutWeakest.length > 0 ? withoutWeakest.reduce((acc, e) => acc * survival(e), 1) : null;
     const pending = evals.filter((e) => e.source !== "analyse").length;
     const keys = draft.map((sel) => matchKey(sel, aiEstimates[sel.id]));
     const sameMatch = new Set(keys).size < keys.length;
-    return { evals, combined, weakest, combinedWithout, pending, sameMatch };
+    return { evals, combined, odds, refundLegs, weakest, combinedWithout, pending, sameMatch };
   }, [draft, pronostics, aiEstimates]);
 
   const addToDraft = () => {
@@ -178,8 +187,6 @@ export function useAnalyseur() {
       setTopMeta({
         coteTotale: data.coteTotale,
         probabiliteCombinee: data.probabiliteCombinee,
-        objectifCoteAtteint: data.objectifCoteAtteint,
-        objectifCote: data.objectifCote,
         avertissement: data.avertissement,
         avertissementDonnees: data.avertissementDonnees,
         message: data.message,

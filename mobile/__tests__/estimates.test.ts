@@ -1,6 +1,6 @@
-import { asCross, awaitsReview, crossLeagueNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, toEstimate } from "../src/estimates";
+import { asCross, awaitsReview, crossLeagueNote, estimateProb, estimatesForChunk, fairOdds, fromTopMatch, mergeEstimates, survival, toEstimate } from "../src/estimates";
 import type { Estimate } from "../src/types";
-import { CROSS_MESSAGE, CROSS_WEAK_MESSAGE, cross, cupLeg, okLeg, quick, topEntry } from "../test-support/fixtures";
+import { CROSS_MESSAGE, CROSS_WEAK_MESSAGE, REFUND_RULE, cross, cupLeg, okLeg, quick, refundLeg, topEntry } from "../test-support/fixtures";
 
 describe("estimation d'une sélection", () => {
   const sel = { id: "a", typePari: "Plus de 1.5 buts" };
@@ -158,5 +158,65 @@ describe("clubs de championnats différents", () => {
 
   test("une analyse impossible n'emporte aucune comparaison", () => {
     expect(toEstimate({ etat: "equipe_inconnue", probabilite: null, message: "Équipe introuvable.", comparaisonEntreChampionnats: cross() }).crossLeague).toBeUndefined();
+  });
+});
+
+describe("paris à ligne entière (remboursés quand le total tombe pile sur la ligne)", () => {
+  test("la réponse du serveur garde la probabilité de gagner, celle du remboursement et la règle", () => {
+    const e = toEstimate(refundLeg());
+    expect(e.p).toBeCloseTo(0.494, 5);
+    expect(e.push).toBeCloseTo(0.258, 5);
+    expect(e.refundRule).toBe(REFUND_RULE);
+  });
+
+  test("un pari ordinaire, ou un serveur plus ancien : aucun remboursement", () => {
+    expect(toEstimate(okLeg()).push).toBe(0);
+    expect(toEstimate(okLeg()).refundRule).toBeUndefined();
+    expect(toEstimate(okLeg({ probabiliteRemboursement: null, regleRemboursement: "  " })).push).toBe(0);
+    expect(toEstimate(okLeg({ regleRemboursement: "  " })).refundRule).toBeUndefined();
+  });
+
+  test("une valeur absurde du serveur est ramenée dans les bornes", () => {
+    expect(toEstimate(refundLeg({ probabiliteRemboursement: -5 })).push).toBe(0);
+    expect(toEstimate(refundLeg({ probabiliteRemboursement: 250 })).push).toBe(0.99);
+    expect(toEstimate(refundLeg({ probabiliteRemboursement: "beaucoup" as never })).push).toBe(0);
+  });
+
+  test("chance de ne rien perdre et cote équitable : le remboursement fait monter l'une et baisser l'autre", () => {
+    const e = { p: 0.494, push: 0.258 };
+    expect(survival(e)).toBeCloseTo(0.752, 5);
+    expect(fairOdds(e)).toBeCloseTo(1.502, 3); // (1 − 0,258) ÷ 0,494 : la cote d'un pari sans remboursement serait 2,02
+    expect(survival({ p: 0.62 })).toBe(0.62);
+    expect(fairOdds({ p: 0.62 })).toBeCloseTo(1 / 0.62, 10);
+    expect(survival({ p: 0.98, push: 0.05 })).toBe(0.995); // jamais une certitude
+  });
+
+  test("sans analyse : moyenne générale de gagner et de remboursement ; l'historique n'est pas utilisé", () => {
+    const wins = Array.from({ length: 6 }, () => ({ typePari: "Plus de 2 buts", statut: "gagne" as const }));
+    const r = estimateProb(wins, { id: "r", typePari: "Plus de 2 buts" }, {});
+    expect(r).toMatchObject({ p: 0.49, source: "general", push: 0.26 });
+  });
+
+  test("avec l'analyse du serveur : la probabilité de gagner et le remboursement viennent d'elle", () => {
+    const r = estimateProb([], { id: "r", typePari: "Plus de 2 buts" }, { r: toEstimate(refundLeg()) });
+    expect(r.source).toBe("analyse");
+    expect(r.p).toBeCloseTo(0.494, 5);
+    expect(r.push).toBeCloseTo(0.258, 5);
+    expect(r.refundRule).toBe(REFUND_RULE);
+  });
+
+  test("les paris ordinaires n'ont jamais de remboursement", () => {
+    expect(estimateProb([], { id: "a", typePari: "Plus de 2.5 buts" }, {}).push).toBe(0);
+    expect(estimateProb([], { id: "a", typePari: "Plus de 2.5 buts" }, { a: toEstimate(okLeg()) }).push).toBe(0);
+  });
+
+  test("un pari remboursé n'est ni gagné ni perdu : il ne compte pas dans l'historique d'un type de pari", () => {
+    const sel = { id: "a", typePari: "Plus de 1.5 buts" };
+    const mix = [
+      ...Array.from({ length: 2 }, () => ({ typePari: "Plus de 1.5 buts", statut: "gagne" as const })),
+      ...Array.from({ length: 6 }, () => ({ typePari: "Plus de 1.5 buts", statut: "rembourse" as const })),
+    ];
+    expect(estimateProb(mix, sel, {}).source).toBe("general"); // 2 paris réglés seulement
+    expect(estimateProb([...mix, { typePari: "Plus de 1.5 buts", statut: "perdu" as const }], sel, {})).toMatchObject({ source: "historique", n: 3 });
   });
 });

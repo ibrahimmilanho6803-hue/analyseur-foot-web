@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react-native";
 import { addMatch, button, chooseBet, openApp, openTab, readStored, resetStorage, team1, team2 } from "../test-support/app";
 import type { Calls } from "../test-support/fakeServer";
 import { installFetch } from "../test-support/fakeServer";
-import { CROSS_MESSAGE, CROSS_WEAK_MESSAGE, cross, cupLeg, okLeg, parisLeg, quick, reviewed, topPayload } from "../test-support/fixtures";
+import { CROSS_MESSAGE, CROSS_WEAK_MESSAGE, REFUND_RULE, cross, cupLeg, okLeg, parisLeg, quick, refundLeg, reviewed, topPayload } from "../test-support/fixtures";
 
 beforeEach(resetStorage);
 afterEach(() => {
@@ -452,5 +452,110 @@ describe("clubs de championnats différents", () => {
     installFetch({});
     await openApp();
     expect(screen.getByText(/Les deux clubs peuvent venir de championnats différents \(Ligue des champions, par exemple\)/)).toBeOnTheScreen();
+  });
+});
+
+describe("types de paris : liste complète, familles repliables", () => {
+  test("la feuille s'ouvre sur la famille du pari choisi ; les autres sont repliées et s'ouvrent une à la fois", async () => {
+    installFetch({});
+    await openApp();
+    await fireEvent.press(screen.getByRole("button", { name: /^Type de pari/ }));
+    expect(await screen.findByRole("button", { name: "Résultat du match" })).toBeExpanded();
+    expect(screen.getByRole("button", { name: "Total de buts du match" })).not.toBeExpanded();
+    expect(screen.queryByRole("radio", { name: "Plus de 3 buts" })).not.toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole("button", { name: "Total de buts du match" }));
+    expect(screen.getByRole("radio", { name: "Plus de 3 buts" })).toBeOnTheScreen();
+    expect(screen.getByRole("radio", { name: "Moins de 0.5 buts" })).toBeOnTheScreen();
+    expect(screen.queryByRole("radio", { name: "Match nul" })).not.toBeOnTheScreen(); // l'ancienne famille s'est repliée
+    await fireEvent.press(screen.getByRole("button", { name: "Total de buts du match" })); // un second appui la referme
+    expect(screen.queryByRole("radio", { name: "Plus de 3 buts" })).not.toBeOnTheScreen();
+  });
+
+  test("les neuf familles sont là, et le pari choisi se retrouve dans la sienne à la réouverture", async () => {
+    installFetch({});
+    await openApp();
+    await chooseBet("Victoire/nul extérieur + Equipe extérieur moins de 2.5 buts");
+    expect(screen.getByRole("button", { name: "Type de pari : Victoire/nul extérieur + Equipe extérieur moins de 2.5 buts" })).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole("button", { name: /^Type de pari/ }));
+    expect(await screen.findByRole("button", { name: "Résultat et total de buts d'une équipe" })).toBeExpanded();
+    expect(screen.getByRole("radio", { name: "Victoire/nul extérieur + Equipe extérieur moins de 2.5 buts" })).toBeChecked();
+    for (const titre of [
+      "Résultat du match",
+      "Total de buts du match",
+      "Les deux équipes marquent",
+      "Total de buts de l'équipe 1 (domicile)",
+      "Total de buts de l'équipe 2 (extérieur)",
+      "Résultat et total de buts du match",
+      "Au moins une équipe marque",
+      "Résultat et total de buts d'une équipe",
+      "Score",
+    ]) {
+      expect(screen.getByRole("button", { name: titre })).toBeOnTheScreen();
+    }
+  });
+
+  test("un nouveau type de pari part tel quel vers le serveur", async () => {
+    const calls = installFetch({ "POST /api/analyze": () => ({ body: { legs: [okLeg({ typePari: "Victoire/nul domicile + Equipe domicile moins de 2.5 buts", probabilite: 53.2 })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Victoire/nul domicile + Equipe domicile moins de 2.5 buts");
+    expect(screen.getAllByText("Victoire/nul domicile + Equipe domicile moins de 2.5 buts")).toHaveLength(2); // le champ de choix et la ligne du coupon
+    await fireEvent.press(button("Analyser"));
+    await screen.findAllByText("53 %");
+    expect(analyseurCalls(calls)[0].body.legs).toEqual([{ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Victoire/nul domicile + Equipe domicile moins de 2.5 buts" }]);
+  });
+});
+
+describe("paris à ligne entière (remboursés si le total tombe pile sur la ligne)", () => {
+  test("avant l'analyse : la règle est déjà expliquée, sans pourcentage de remboursement inventé", async () => {
+    installFetch({});
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 2 buts");
+    expect(screen.getByText(REFUND_RULE)).toBeOnTheScreen();
+    expect(screen.queryByText(/Remboursé dans/)).not.toBeOnTheScreen();
+    expect(screen.getByText(/1 pari est à ligne entière : remboursé \(cote 1,00\)/)).toBeOnTheScreen();
+  });
+
+  test("après l'analyse : chance de gagner, chance de remboursement, règle du serveur, total et cote tiennent compte du remboursement", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [refundLeg(), okLeg({ equipe1: "Inter", equipe2: "Torino", probabilite: 80 })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 2 buts");
+    await addMatch("Inter", "Torino", "Plus de 1.5 buts");
+    await fireEvent.press(button("Analyser"));
+    await screen.findByText("49 %"); // la chance de GAGNER ce pari
+    expect(screen.getByText(`Remboursé dans 26 % des cas. ${REFUND_RULE}`)).toBeOnTheScreen();
+    // Chance de ne rien perdre : (49,4 % + 25,8 %) × 80 % = 60 % ; cote : (1 − 0,258) ÷ 0,494 × 1,25 = 1,88.
+    expect(screen.getByText("60 %")).toBeOnTheScreen();
+    expect(screen.getByText(/Cote équitable estimée : 1\.88/)).toBeOnTheScreen();
+    expect(screen.getByText(/Le pourcentage est la chance de ne rien perdre ; la cote suppose que tous les paris sont gagnés/)).toBeOnTheScreen();
+    expect(screen.getByText(/Sélection la plus fragile : Arsenal vs Chelsea \(75 %\)\. Sans elle : 80 %\./)).toBeOnTheScreen();
+  });
+
+  test("deux paris à ligne entière : la note du total est au pluriel", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [refundLeg(), refundLeg({ equipe1: "Inter", equipe2: "Torino", typePari: "Moins de 3 buts", probabilite: 50.6, probabiliteRemboursement: 21.9 })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 2 buts");
+    await addMatch("Inter", "Torino", "Moins de 3 buts");
+    await fireEvent.press(button("Analyser"));
+    await screen.findByText(/2 paris sont à ligne entière : remboursés \(cote 1,00\)/);
+  });
+
+  test("un pari ordinaire n'affiche ni règle ni note de remboursement", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [okLeg()] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 2.5 buts");
+    await fireEvent.press(button("Analyser"));
+    await screen.findAllByText("62 %");
+    expect(screen.queryByText(/rembours/i)).not.toBeOnTheScreen();
+    expect(screen.queryByText(/ligne entière/)).not.toBeOnTheScreen();
+  });
+
+  test("un pari à ligne entière dont le serveur ne donne pas le remboursement (ancienne version) garde la règle générale", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [okLeg({ typePari: "Plus de 2 buts", probabilite: 49.4 })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 2 buts");
+    await fireEvent.press(button("Analyser"));
+    await screen.findAllByText("49 %");
+    expect(screen.getByText(REFUND_RULE)).toBeOnTheScreen();
+    expect(screen.queryByText(/Remboursé dans/)).not.toBeOnTheScreen();
   });
 });

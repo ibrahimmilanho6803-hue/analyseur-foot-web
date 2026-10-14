@@ -15,8 +15,8 @@ export default function AutoScreen({ c }: { c: Controller }) {
     <Card>
       <SectionTitle>Génération automatique</SectionTitle>
       <Txt style={s.intro}>
-        Saisissez des matchs : le serveur choisit pour chacun le pari le plus sûr dont la probabilité reste intéressante (entre 55 % et 88 %). L'équipe 1 reçoit, l'équipe 2 se déplace. Les deux clubs peuvent venir de championnats
-        différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
+        Saisissez des matchs : le serveur choisit pour chacun le pari le plus fiable, c'est-à-dire le plus probable, quelle que soit sa cote (un pari très sûr a une cote très basse). L'équipe 1 reçoit, l'équipe 2 se déplace. Les deux
+        clubs peuvent venir de championnats différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
       </Txt>
 
       <TeamInput

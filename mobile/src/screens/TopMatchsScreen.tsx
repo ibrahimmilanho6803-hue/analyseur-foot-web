@@ -91,7 +91,7 @@ export default function TopMatchsScreen({ c }: { c: Controller }) {
               Probabilité combinée : <Bold>{topMeta.probabiliteCombinee} %</Bold>
             </Txt>
           </View>
-          {topMeta.objectifCoteAtteint === false ? <Txt style={s.summaryNote}>Objectif de cote ({topMeta.objectifCote}) non atteint avec les matchs disponibles.</Txt> : null}
+          <Txt style={s.summaryNote}>Ces paris sont choisis pour leur fiabilité, quelle que soit leur cote : plus un pari est sûr, plus sa cote est basse.</Txt>
           {topMeta.avertissement ? <Txt style={s.summaryNote}>{topMeta.avertissement}</Txt> : null}
         </View>
       ) : null}
