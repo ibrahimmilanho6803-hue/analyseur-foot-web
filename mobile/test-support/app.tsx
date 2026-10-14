@@ -3,6 +3,7 @@ import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { fireEvent, render, screen, within } from "@testing-library/react-native";
 import AnalyseurApp from "../src/AnalyseurApp";
+import { CATALOG_VERSION } from "../src/storage";
 import { CATALOG } from "./fixtures";
 
 export async function openApp() {
@@ -53,7 +54,7 @@ export async function readStored(key: string) {
 }
 export const savedCatalog = () => readStored("coupon-clubs");
 export const seedCatalog = (ageMs: number, over: Record<string, unknown> = {}) =>
-  AsyncStorage.setItem("coupon-clubs", JSON.stringify({ at: Date.now() - ageMs, data: { ...CATALOG, ...over } }));
+  AsyncStorage.setItem("coupon-clubs", JSON.stringify({ v: CATALOG_VERSION, at: Date.now() - ageMs, data: { ...CATALOG, ...over } }));
 export const withCatalog = (over: Record<string, unknown> = {}) => ({ "GET /api/teams": () => ({ body: { ...CATALOG, ...over } }) });
 
 export const HISTORY_KEY = "coupon-pronostics";

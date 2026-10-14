@@ -188,6 +188,7 @@ export function useAnalyseur() {
         perime: data.perime,
         fenetreHeures: data.fenetreHeures,
         nbChampionnats: data.donnees && Array.isArray(data.donnees.championnatsPrets) ? data.donnees.championnatsPrets.length : null,
+        nbCoupes: data.donnees && Array.isArray(data.donnees.coupesPretes) ? data.donnees.coupesPretes.length : 0,
       });
       setTopAt(Date.now());
     } catch (e) {

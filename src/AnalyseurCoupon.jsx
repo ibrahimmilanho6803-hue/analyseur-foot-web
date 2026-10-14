@@ -89,6 +89,27 @@ export async function callApi(path, { method = "GET", body, timeoutMs = 70000 } 
   }
 }
 
+// Comparaison entre championnats renvoyée par le serveur (clubs de championnats différents : Ligue des champions…) ; absente pour deux
+// clubs du même championnat.
+export function asCross(raw) {
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : undefined;
+}
+
+// Avertissement à montrer à côté d'un pronostic entre clubs de championnats différents : le texte du serveur (il dit pourquoi
+// l'estimation est moins précise), ou à défaut une phrase générale.
+export function crossLeagueNote(cross) {
+  if (!cross) return null;
+  const message = typeof cross.message === "string" ? cross.message.trim() : "";
+  return message || "Ces deux clubs ne jouent pas dans le même championnat : estimation moins précise qu'entre deux clubs d'un même championnat.";
+}
+
+// Mise en garde sous le total du coupon : count sélections opposent des clubs de championnats différents.
+export function crossTotalNote(count) {
+  return count > 1
+    ? `${count} sélections opposent des clubs de championnats différents : leurs estimations sont moins précises, le pourcentage combiné aussi.`
+    : "1 sélection oppose des clubs de championnats différents : son estimation est moins précise, le pourcentage combiné aussi.";
+}
+
 // Transforme la réponse du serveur pour une sélection. Sans analyse chiffrée, p vaut null : aucune probabilité n'est inventée.
 export function toEstimate(r) {
   if (!r) return { p: null, message: "Pas de réponse du serveur pour cette sélection." };
@@ -108,6 +129,7 @@ export function toEstimate(r) {
       h2h: r.h2h,
       homeAway1: r.homeAway1,
       homeAway2: r.homeAway2,
+      crossLeague: asCross(r.comparaisonEntreChampionnats),
     };
   }
   const sug = r.suggestions ? [...(r.suggestions.equipe1 || []), ...(r.suggestions.equipe2 || [])].slice(0, 4) : [];
@@ -154,13 +176,17 @@ function useStore() {
 
 // ---------- Liste des clubs pour les suggestions de saisie ----------
 const CATALOG_KEY = "coupon-clubs";
+// Version de la liste gardée sur l'appareil. 2 : le serveur propose les clubs de tous les championnats suivis (une trentaine, dont les
+// coupes d'Europe) et non plus seulement les dix principaux ; une liste enregistrée par une version précédente est ignorée, pour ne pas
+// faire croire pendant un jour qu'un club n'est pas suivi.
+const CATALOG_VERSION = 2;
 const CATALOG_TTL_MS = 24 * 3600000; // liste complète : redemandée au plus une fois par jour
 const CATALOG_RETRY_MS = 60000; // liste incomplète (championnats en chargement) ou serveur injoignable : un essai par minute au plus
 
 function savedCatalog() {
   try {
     const saved = JSON.parse(localStorage.getItem(CATALOG_KEY));
-    if (saved && Number.isFinite(saved.at) && saved.data && Array.isArray(saved.data.equipes)) return saved;
+    if (saved && saved.v === CATALOG_VERSION && Number.isFinite(saved.at) && saved.data && Array.isArray(saved.data.equipes)) return saved;
   } catch (e) {}
   return null;
 }
@@ -189,7 +215,7 @@ export function useTeamCatalog() {
       if (!data || !Array.isArray(data.equipes)) return;
       const at = Date.now();
       setState({ index: buildIndex(data), complete: Boolean(data.complet), at });
-      try { localStorage.setItem(CATALOG_KEY, JSON.stringify({ at, data })); } catch (e) {}
+      try { localStorage.setItem(CATALOG_KEY, JSON.stringify({ v: CATALOG_VERSION, at, data })); } catch (e) {}
     } catch (e) {
       // silencieux : voir plus haut
     } finally {
@@ -264,6 +290,7 @@ export function fromTopMatch(m) {
     h2h: m.h2h,
     homeAway1: m.homeAway1,
     homeAway2: m.homeAway2,
+    crossLeague: asCross(m.comparaisonEntreChampionnats),
   };
 }
 
@@ -317,7 +344,9 @@ export default function App() {
     const pending = evals.filter((e) => e.source !== "analyse").length;
     const keys = draft.map((sel) => matchKey(sel, aiEstimates[sel.id]));
     const sameMatch = new Set(keys).size < keys.length;
-    return { evals, combined, weakest, combinedWithout, pending, sameMatch };
+    // Sélections dont les deux clubs viennent de championnats différents : leur estimation est moins précise, et le total aussi.
+    const crossCount = evals.filter((e) => !e.failed && e.source === "analyse" && aiEstimates[e.sel.id] && aiEstimates[e.sel.id].crossLeague).length;
+    return { evals, combined, weakest, combinedWithout, pending, sameMatch, crossCount };
   }, [draft, pronostics, aiEstimates]);
 
   const addToDraft = () => {
@@ -392,6 +421,7 @@ export default function App() {
         perime: data.perime,
         fenetreHeures: data.fenetreHeures,
         nbChampionnats: data.donnees && Array.isArray(data.donnees.championnatsPrets) ? data.donnees.championnatsPrets.length : null,
+        nbCoupes: data.donnees && Array.isArray(data.donnees.coupesPretes) ? data.donnees.coupesPretes.length : 0,
       });
       setTopAt(Date.now());
     } catch (e) {
@@ -525,7 +555,7 @@ export default function App() {
             </div>
             <div style={{ fontSize: 12, color: T.chalkDim, marginBottom: 10 }}>
               {topMeta && topMeta.nbChampionnats
-                ? `Analyse de ${topMeta.nbChampionnats} championnat${topMeta.nbChampionnats > 1 ? "s" : ""}, matchs des ${topMeta.fenetreHeures} prochaines heures.`
+                ? `Analyse de ${topMeta.nbChampionnats} championnat${topMeta.nbChampionnats > 1 ? "s" : ""}${topMeta.nbCoupes > 0 ? ` et ${topMeta.nbCoupes} coupe${topMeta.nbCoupes > 1 ? "s" : ""} d'Europe` : ""}, matchs des ${topMeta.fenetreHeures} prochaines heures.`
                 : "Analyse des championnats couverts par le serveur."}
             </div>
             {topLoading && <div style={{ textAlign: "center", padding: 20, color: T.chalkDim }}>Analyse des matchs en cours… (jusqu'à une minute)</div>}
@@ -564,6 +594,7 @@ export default function App() {
                   <span style={{ fontSize: 10, color: T.chalkDim, textTransform: "uppercase" }}>Confiance : {confidenceLabel(match.niveauConfiance)}</span>
                   {typeof match.coteEstimee === "number" && <span style={{ fontSize: 10, color: T.chalkDim }}>Cote estimée {match.coteEstimee.toFixed(2)}</span>}
                 </div>
+                {asCross(match.comparaisonEntreChampionnats) && <div style={noteStyle(T.gold)}><AlertTriangle size={14} style={{ flexShrink: 0 }}/><span>{crossLeagueNote(asCross(match.comparaisonEntreChampionnats))}</span></div>}
                 {showDetails && <div style={{ fontSize: 11, color: T.chalkDim, marginBottom: 6, fontStyle: "italic" }}>{match.justification}</div>}
                 {showDetails && match.vigilance && <div style={{ fontSize: 11, color: T.gold, marginBottom: 6 }}>À surveiller : {match.vigilance}</div>}
                 <button onClick={() => addTopMatchToDraft(match)} disabled={isInDraft(match)} style={{ width: "100%", padding: 8, background: T.gold, color: T.bgDeep, border: "none", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", opacity: isInDraft(match) ? 0.5 : 1 }}>{isInDraft(match) ? "Déjà dans le coupon" : "Ajouter ce pronostic"}</button>
@@ -616,6 +647,7 @@ export default function App() {
                       </div>
                     </div>
                     {ev && ev.failed && <div style={noteStyle(T.gold)}><AlertTriangle size={14} style={{ flexShrink: 0 }}/><span>{ev.message}</span></div>}
+                    {detailed && aiData.crossLeague && <div style={noteStyle(T.gold)}><AlertTriangle size={14} style={{ flexShrink: 0 }}/><span>{crossLeagueNote(aiData.crossLeague)}</span></div>}
                     {detailed && showDetails && aiData.reason && (
                       <div style={{ marginTop: 6, padding: 6, background: T.bgDeep, borderRadius: 4, fontSize: 11, fontStyle: "italic", color: T.chalkDim }}>{aiData.reason}</div>
                     )}
@@ -669,6 +701,9 @@ export default function App() {
                   {analysis.sameMatch && (
                     <div style={noteStyle(T.gold)}><AlertTriangle size={14} style={{ flexShrink: 0 }}/><span>Plusieurs paris portent sur le même match : ils sont liés entre eux, le pourcentage combiné peut être inexact.</span></div>
                   )}
+                  {analysis.crossCount > 0 && (
+                    <div style={noteStyle(T.gold)}><AlertTriangle size={14} style={{ flexShrink: 0 }}/><span>{crossTotalNote(analysis.crossCount)}</span></div>
+                  )}
                   {analysis.pending === 0 && draft.length > 1 && analysis.combinedWithout !== null && (
                     <div style={{ fontSize: 11, color: T.chalkDim, marginTop: 8, textAlign: "center" }}>
                       Sélection la plus fragile : {analysis.weakest.sel.equipe1} vs {analysis.weakest.sel.equipe2} ({Math.round(analysis.weakest.p * 100)} %). Sans elle : {Math.round(analysis.combinedWithout * 100)} %.
@@ -701,7 +736,7 @@ export default function App() {
             <button onClick={addToDraft} style={{ width: "100%", padding: 12, background: "transparent", border: `2px dashed ${T.line}`, color: T.gold, borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
               <Plus size={16}/> Ajouter
             </button>
-            <div style={{ fontSize: 10, color: T.chalkDim, marginTop: 8 }}>L'équipe 1 reçoit (domicile), l'équipe 2 se déplace : « Victoire domicile » désigne l'équipe 1.</div>
+            <div style={{ fontSize: 10, color: T.chalkDim, marginTop: 8 }}>L'équipe 1 reçoit (domicile), l'équipe 2 se déplace : « Victoire domicile » désigne l'équipe 1. Les deux clubs peuvent venir de championnats différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.</div>
           </div>
 
           {draft.length > 0 && (
@@ -715,7 +750,7 @@ export default function App() {
         <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 10, padding: 14 }}>
           <div style={sectionTitle}>Génération automatique</div>
           <div style={{ fontSize: 12, color: T.chalkDim, marginBottom: 10 }}>
-            Saisissez des matchs : le serveur choisit pour chacun le pari le plus sûr dont la probabilité reste intéressante (entre 55 % et 88 %). L'équipe 1 reçoit, l'équipe 2 se déplace.
+            Saisissez des matchs : le serveur choisit pour chacun le pari le plus sûr dont la probabilité reste intéressante (entre 55 % et 88 %). L'équipe 1 reçoit, l'équipe 2 se déplace. Les deux clubs peuvent venir de championnats différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
             <TeamInput label="Équipe 1 du match à générer" placeholder="Équipe 1" value={genForm.equipe1} onChange={(v) => setGenForm((f) => ({ ...f, equipe1: v }))} index={catalog.index} complete={catalog.complete} onFocus={catalog.refresh} />

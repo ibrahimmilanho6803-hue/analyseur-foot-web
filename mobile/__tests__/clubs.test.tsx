@@ -176,3 +176,44 @@ describe("saisie d'un club avec suggestions", () => {
     expect(await screen.findByText("Bayern Munich vs Borussia Dortmund")).toBeOnTheScreen();
   });
 });
+
+describe("liste des clubs : tous les championnats suivis", () => {
+  test("liste enregistrée par une ancienne version de l'application : ignorée, la liste actuelle est demandée", async () => {
+    // Ancien format (sans numéro de version) : seulement quelques clubs des championnats principaux, enregistrée il y a une heure.
+    await AsyncStorage.setItem("coupon-clubs", JSON.stringify({ at: Date.now() - 3600000, data: { ...CATALOG, equipes: CATALOG.equipes.slice(0, 3) } }));
+    const calls = installFetch(withCatalog());
+    await openApp();
+    await waitFor(() => expect(calls.catalog).toHaveLength(1));
+    await typeIn(team1(), "benf");
+    expect(await screen.findByRole("option", { name: /Benfica/ })).toBeOnTheScreen();
+  });
+
+  test("un club d'un autre championnat est proposé avec son championnat", async () => {
+    installFetch(withCatalog());
+    await openApp();
+    await typeIn(team1(), "benf");
+    const option = await screen.findByRole("option", { name: /Benfica/ });
+    expect(within(option).getByText("Liga Portugal")).toBeOnTheScreen();
+  });
+
+  test("un club connu seulement par les coupes d'Europe est proposé, sous « Autres clubs européens »", async () => {
+    installFetch(withCatalog());
+    await openApp();
+    await typeIn(team2(), "dinamo");
+    const option = await screen.findByRole("option", { name: /Dinamo Zagreb/ });
+    expect(within(option).getByText("Autres clubs européens")).toBeOnTheScreen();
+    await userEvent.setup().press(option);
+    expect(team2()).toHaveDisplayValue("Dinamo Zagreb");
+  });
+
+  test("la liste enregistrée par cette version est réutilisée telle quelle", async () => {
+    await seedCatalog(3600000);
+    const calls = installFetch(withCatalog());
+    await openApp();
+    await typeIn(team1(), "benf");
+    expect(screen.getByRole("option", { name: /Benfica/ })).toBeOnTheScreen();
+    expect(calls.catalog).toHaveLength(0);
+    expect((await AsyncStorage.getItem("coupon-clubs"))?.includes('"v":2')).toBe(true);
+  });
+});
+

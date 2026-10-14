@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { awaitsReview, callApi, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, toEstimate } from "./AnalyseurCoupon";
+import { asCross, awaitsReview, callApi, crossLeagueNote, crossTotalNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, toEstimate } from "./AnalyseurCoupon";
 import { CATALOG } from "./testData";
 
 // ---------- Faux serveur : chaque appel est enregistré, aucun appel réseau réel ----------
@@ -86,6 +86,16 @@ const okLeg = (over = {}) => ({
   ia: { statut: "ok", modele: "claude-sonnet-5-5" },
   ...over,
 });
+
+// Comparaison renvoyée par le serveur quand les deux clubs ne jouent pas dans le même championnat (Ligue des champions…).
+const CROSS_MESSAGE =
+  "Ces deux clubs ne jouent pas dans le même championnat : leur niveau relatif est estimé grâce aux matchs de coupes d'Europe. Estimation moins précise qu'entre deux clubs d'un même championnat.";
+const CROSS_WEAK_MESSAGE =
+  "L'un de ces clubs ne joue dans aucun championnat suivi par l'application : son niveau n'est estimé que d'après ses matchs de coupes d'Europe. Estimation peu précise.";
+const cross = (over = {}) => ({ championnat1: "Premier League", championnat2: "Liga", niveauDesChampionnatsMesure: true, message: CROSS_MESSAGE, ...over });
+// Une analyse de Ligue des champions : Arsenal (Premier League) reçoit le Real Madrid (Liga).
+const cupLeg = (over = {}) =>
+  okLeg({ equipe1: "Arsenal", equipe2: "Real Madrid", competition: "UEFA Champions League", date: "2026-10-21T19:00:00.000Z", comparaisonEntreChampionnats: cross(), ...over });
 
 async function openApp() {
   render(<App />);
@@ -441,7 +451,7 @@ describe("onglet Auto", () => {
 // ---------- Suggestions de clubs ----------
 const withCatalog = (over = {}) => ({ "GET /api/teams": () => ({ body: { ...CATALOG, ...over } }) });
 const savedCatalog = () => JSON.parse(localStorage.getItem("coupon-clubs"));
-const seedCatalog = (ageMs, over = {}) => localStorage.setItem("coupon-clubs", JSON.stringify({ at: Date.now() - ageMs, data: { ...CATALOG, ...over } }));
+const seedCatalog = (ageMs, over = {}) => localStorage.setItem("coupon-clubs", JSON.stringify({ v: 2, at: Date.now() - ageMs, data: { ...CATALOG, ...over } }));
 const team1 = () => screen.getByLabelText("Équipe 1 (à domicile)");
 const team2 = () => screen.getByLabelText("Équipe 2 (à l'extérieur)");
 const suggestionOptions = () => within(screen.getByRole("listbox", { name: "Suggestions de clubs" })).getAllByRole("option"); // sans les options du menu « Type de pari »
@@ -859,5 +869,195 @@ describe("fusion des estimations", () => {
     expect(awaitsReview(quick({ ia: { statut: "non_applicable" } }))).toBe(false);
     expect(awaitsReview({ etat: "equipe_inconnue", ia: { statut: "non_demandee" } })).toBe(false);
     expect(awaitsReview(undefined)).toBe(false);
+  });
+});
+
+// ---------- Clubs de championnats différents (Ligue des champions, autres championnats) ----------
+describe("clubs de championnats différents", () => {
+  const quickLeg = (over = {}) => okLeg({ probabilite: 60, ajustementIA: 0, justification: "Texte du modèle.", ia: { statut: "non_demandee" }, ...over });
+  const reviewedLeg = (over = {}) => okLeg({ probabilite: 62.5, ajustementIA: 2.5, justification: "Texte relu par l'IA.", ia: { statut: "ok", modele: "claude-sonnet-5-5" }, ...over });
+
+  test("la comparaison du serveur est gardée avec l'estimation (analyse, Auto et Top Matchs)", () => {
+    expect(toEstimate(cupLeg()).crossLeague).toEqual(cross());
+    expect(fromTopMatch(topEntry(0, { comparaisonEntreChampionnats: cross() })).crossLeague).toEqual(cross());
+    expect(toEstimate(cupLeg()).p).toBeCloseTo(0.623, 5);
+  });
+
+  test("deux clubs du même championnat, ou serveur plus ancien : rien à signaler", () => {
+    expect(toEstimate(okLeg()).crossLeague).toBeUndefined();
+    expect(toEstimate(okLeg({ comparaisonEntreChampionnats: null })).crossLeague).toBeUndefined();
+    expect(fromTopMatch(topEntry(0)).crossLeague).toBeUndefined();
+    expect(toEstimate(okLeg({ comparaisonEntreChampionnats: "oui" })).crossLeague).toBeUndefined();
+    expect(asCross([cross()])).toBeUndefined();
+  });
+
+  test("l'avertissement affiché est celui du serveur, ou à défaut une phrase générale", () => {
+    expect(crossLeagueNote(cross())).toBe(CROSS_MESSAGE);
+    expect(crossLeagueNote(cross({ message: CROSS_WEAK_MESSAGE }))).toBe(CROSS_WEAK_MESSAGE);
+    expect(crossLeagueNote({ championnat1: "Premier League" })).toMatch(/ne jouent pas dans le même championnat/);
+    expect(crossLeagueNote({ message: "   " })).toMatch(/estimation moins précise/);
+    expect(crossLeagueNote(undefined)).toBeNull();
+    expect(crossTotalNote(1)).toMatch(/^1 sélection oppose/);
+    expect(crossTotalNote(3)).toMatch(/^3 sélections opposent/);
+  });
+
+  test("Mon coupon : l'avertissement du serveur est visible sous le pari concerné, et le total le rappelle", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [cupLeg(), okLeg({ equipe1: "Inter", equipe2: "Torino", typePari: "Match nul", probabilite: 30 })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Real Madrid", "Plus de 1.5 buts");
+    await addMatch("Inter", "Torino", "Match nul");
+    expect(screen.queryByText(CROSS_MESSAGE)).not.toBeInTheDocument(); // rien avant l'analyse
+    userEvent.click(screen.getByRole("button", { name: "Analyser" }));
+    expect(await screen.findByText(CROSS_MESSAGE)).toBeInTheDocument(); // sans avoir ouvert « Détails »
+    expect(screen.getAllByText(CROSS_MESSAGE)).toHaveLength(1); // Inter – Torino n'est pas concerné
+    expect(screen.getByText(/^UEFA Champions League · /)).toBeInTheDocument();
+    expect(screen.getByText("1 sélection oppose des clubs de championnats différents : son estimation est moins précise, le pourcentage combiné aussi.")).toBeInTheDocument();
+  });
+
+  test("deux sélections concernées : le total le dit au pluriel, chaque pari garde son texte", async () => {
+    installFetch({
+      "POST /api/analyze": () => ({
+        body: { legs: [cupLeg(), cupLeg({ equipe1: "Inter", equipe2: "Benfica", typePari: "Match nul", probabilite: 30, comparaisonEntreChampionnats: cross({ message: CROSS_WEAK_MESSAGE }) })] },
+      }),
+    });
+    await openApp();
+    await addMatch("Arsenal", "Real Madrid", "Plus de 1.5 buts");
+    await addMatch("Inter", "Benfica", "Match nul");
+    userEvent.click(screen.getByRole("button", { name: "Analyser" }));
+    expect(await screen.findByText(CROSS_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByText(CROSS_WEAK_MESSAGE)).toBeInTheDocument(); // le texte du serveur, tel quel (club d'un championnat non suivi)
+    expect(screen.getByText(/2 sélections opposent des clubs de championnats différents/)).toBeInTheDocument();
+  });
+
+  test("la relecture de l'IA ne fait pas disparaître l'avertissement", async () => {
+    installFetch({
+      "POST /api/analyze": (body) => ({ body: { legs: [body.ia === false ? quickLeg({ comparaisonEntreChampionnats: cross() }) : reviewedLeg({ comparaisonEntreChampionnats: cross() })] } }),
+    });
+    await openApp();
+    await addMatch("Arsenal", "Real Madrid", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: "Analyser" }));
+    await screen.findAllByText("63 %"); // relecture arrivée
+    expect(screen.getAllByText(CROSS_MESSAGE)).toHaveLength(1);
+  });
+
+  test("deux clubs du même championnat : aucun avertissement de ce genre", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [okLeg()] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: "Analyser" }));
+    await screen.findAllByText("62 %");
+    expect(screen.queryByText(/oppos(e|ent) des clubs de championnats différents/)).not.toBeInTheDocument(); // la mise en garde sur le total
+    expect(screen.queryByText(/ne jouent pas dans le même championnat/)).not.toBeInTheDocument(); // celle du pari
+  });
+
+  test("une sélection dont l'analyse a échoué ne compte pas parmi celles à signaler", async () => {
+    installFetch({
+      "POST /api/analyze": () => ({ body: { legs: [cupLeg(), { etat: "equipe_inconnue", probabilite: null, message: "Équipe introuvable : vérifiez l'orthographe.", suggestions: { equipe1: [], equipe2: [] } }] } }),
+    });
+    await openApp();
+    await addMatch("Arsenal", "Real Madrid", "Plus de 1.5 buts");
+    await addMatch("Xyz", "Abc", "Match nul");
+    userEvent.click(screen.getByRole("button", { name: "Analyser" }));
+    await screen.findByText(/Équipe introuvable/);
+    expect(screen.getByText(/^1 sélection oppose des clubs/)).toBeInTheDocument();
+  });
+
+  test("les écrans le disent : les deux clubs peuvent venir de championnats différents", async () => {
+    installFetch({});
+    await openApp();
+    expect(screen.getByText(/Les deux clubs peuvent venir de championnats différents \(Ligue des champions, par exemple\)/)).toBeInTheDocument();
+    userEvent.click(screen.getByRole("button", { name: "Auto" }));
+    expect(screen.getByText(/Les deux clubs peuvent venir de championnats différents \(Ligue des champions, par exemple\)/)).toBeInTheDocument();
+  });
+
+  test("Auto : un match de Ligue des champions est analysé et ajouté au coupon avec son avertissement", async () => {
+    const calls = installFetch({
+      "POST /api/auto-coupon": () => ({ body: { resultats: [{ index: 0, ...cupLeg({ typePari: "Victoire ou nul domicile", probabilite: 66.4 }) }], analyses: 1 } }),
+    });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Auto" }));
+    userEvent.type(screen.getByLabelText("Équipe 1 du match à générer"), "Arsenal");
+    userEvent.type(screen.getByLabelText("Équipe 2 du match à générer"), "Real Madrid");
+    userEvent.click(screen.getByRole("button", { name: /Ajouter/ }));
+    userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
+    await screen.findByText("Coupon (1 match)");
+    expect(calls[0].body).toEqual({ matches: [{ equipe1: "Arsenal", equipe2: "Real Madrid" }] });
+    expect(screen.getByText(/^UEFA Champions League · /)).toBeInTheDocument();
+    expect(screen.getByText(CROSS_MESSAGE)).toBeInTheDocument();
+  });
+
+  describe("Top Matchs", () => {
+    const leagues = ["PL", "PD", "SA", "BL1", "FL1", "PPL", "DED", "BSA"];
+    const openTop = async (payload) => {
+      installFetch({ "GET /api/top-matches": () => ({ body: payload }) });
+      await openApp();
+      userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    };
+
+    test("le sous-titre compte aussi les coupes d'Europe analysées", async () => {
+      await openTop(topPayload({ donnees: { championnatsPrets: leagues, coupesPretes: ["CL", "EL", "UECL"] } }));
+      expect(await screen.findByText(/Analyse de 8 championnats et 3 coupes d'Europe, matchs des 72 prochaines heures/)).toBeInTheDocument();
+    });
+
+    test("une seule coupe : singulier ; aucune coupe : la phrase d'avant", async () => {
+      await openTop(topPayload({ donnees: { championnatsPrets: leagues, coupesPretes: ["CL"] } }));
+      expect(await screen.findByText(/Analyse de 8 championnats et 1 coupe d'Europe, matchs/)).toBeInTheDocument();
+    });
+
+    test("sans coupe annoncée, le sous-titre ne parle pas de coupes", async () => {
+      await openTop(topPayload({ donnees: { championnatsPrets: leagues, coupesPretes: [] } }));
+      expect(await screen.findByText(/Analyse de 8 championnats, matchs des 72 prochaines heures/)).toBeInTheDocument();
+      expect(screen.queryByText(/coupe/)).not.toBeInTheDocument();
+    });
+
+    test("un match de coupe entre deux championnats porte l'avertissement du serveur, et le garde dans le coupon", async () => {
+      await openTop(topPayload({ topMatches: [topEntry(0, { competition: "UEFA Champions League", comparaisonEntreChampionnats: cross() }), topEntry(1), topEntry(2)] }));
+      await screen.findByText("Arsenal vs Chelsea");
+      expect(screen.getByText("UEFA Champions League")).toBeInTheDocument();
+      expect(screen.getAllByText(CROSS_MESSAGE)).toHaveLength(1); // seul ce match est concerné
+      userEvent.click(screen.getAllByRole("button", { name: "Ajouter ce pronostic" })[0]);
+      userEvent.click(screen.getByRole("button", { name: "Mon coupon" }));
+      expect(screen.getByText(CROSS_MESSAGE)).toBeInTheDocument();
+      expect(screen.getByText(/^1 sélection oppose des clubs de championnats différents/)).toBeInTheDocument();
+    });
+  });
+
+  describe("liste des clubs", () => {
+    test("liste enregistrée par une ancienne version : ignorée, la liste actuelle est demandée", async () => {
+      // Ancien format (sans numéro de version) : seulement quelques clubs des championnats principaux, enregistrée il y a une heure.
+      localStorage.setItem("coupon-clubs", JSON.stringify({ at: Date.now() - 3600000, data: { ...CATALOG, equipes: CATALOG.equipes.slice(0, 3) } }));
+      const calls = installFetch(withCatalog());
+      await openApp();
+      await waitFor(() => expect(calls.catalog).toHaveLength(1));
+      userEvent.type(team1(), "benf");
+      expect(await screen.findByRole("option", { name: /Benfica/ })).toBeInTheDocument();
+    });
+
+    test("un club d'un autre championnat, ou connu seulement par les coupes d'Europe, est proposé avec son championnat", async () => {
+      installFetch(withCatalog());
+      await openApp();
+      userEvent.type(team1(), "benf");
+      const benfica = await screen.findByRole("option", { name: /Benfica/ });
+      expect(within(benfica).getByText("Liga Portugal")).toBeInTheDocument();
+      userEvent.type(team2(), "dinamo");
+      const dinamo = await screen.findByRole("option", { name: /Dinamo Zagreb/ });
+      expect(within(dinamo).getByText("Autres clubs européens")).toBeInTheDocument();
+    });
+
+    test("la liste enregistrée par cette version est réutilisée telle quelle, avec son numéro de version", async () => {
+      seedCatalog(3600000);
+      const calls = installFetch(withCatalog());
+      await openApp();
+      userEvent.type(team1(), "benf");
+      expect(screen.getByRole("option", { name: /Benfica/ })).toBeInTheDocument();
+      expect(calls.catalog).toHaveLength(0);
+    });
+
+    test("la liste demandée au serveur est enregistrée avec son numéro de version", async () => {
+      installFetch(withCatalog());
+      await openApp();
+      await waitFor(() => expect(savedCatalog()).not.toBeNull());
+      expect(savedCatalog().v).toBe(2);
+    });
   });
 });

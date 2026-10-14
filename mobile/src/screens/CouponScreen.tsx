@@ -2,6 +2,7 @@ import React from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import BetTypePicker from "../components/BetTypePicker";
 import TeamInput from "../components/TeamInput";
+import { crossLeagueNote } from "../estimates";
 import { confidenceLabel, formatDate, nameDiffers } from "../format";
 import type { Controller, CouponAnalysis, Evaluation } from "../hooks/useAnalyseur";
 import { F, T, alpha } from "../theme";
@@ -13,6 +14,11 @@ function verdict(p: number): { label: string; color: string } {
 }
 
 const pct = (p: number) => `${Math.round(p * 100)} %`;
+
+const crossTotalNote = (count: number): string =>
+  count > 1
+    ? `${count} sélections opposent des clubs de championnats différents : leurs estimations sont moins précises, le pourcentage combiné aussi.`
+    : "1 sélection oppose des clubs de championnats différents : son estimation est moins précise, le pourcentage combiné aussi.";
 
 function HomeAwayBox({ title, record }: { title: string; record: NonNullable<HomeAway["home"]> }) {
   return (
@@ -69,6 +75,7 @@ function SelectionRow({ sel, ev, ai, showDetails, onRemove }: { sel: Selection; 
         </View>
       </View>
       {ev && ev.failed ? <Note>{ev.message}</Note> : null}
+      {detailed && ai?.crossLeague ? <Note>{crossLeagueNote(ai.crossLeague)}</Note> : null}
       {detailed && showDetails && ai?.reason ? <Txt style={s.reason}>{ai.reason}</Txt> : null}
       {detailed && showDetails && ai?.vigilance ? <Txt style={s.vigilance}>{`À surveiller : ${ai.vigilance}`}</Txt> : null}
       {detailed && showDetails && ai?.confidence ? <Txt style={s.confidence}>{`Confiance : ${confidenceLabel(ai.confidence)}`}</Txt> : null}
@@ -96,6 +103,8 @@ function Total({ c, analysis }: { c: Controller; analysis: CouponAnalysis }) {
   const indicative = analysis.pending > 0;
   const v = verdict(analysis.combined);
   const [weak1, weak2] = shownNames(analysis.weakest.sel, c.aiEstimates[analysis.weakest.sel.id]);
+  // Sélections dont les deux clubs viennent de championnats différents : leur estimation est moins précise, et le total aussi.
+  const crossCount = analysis.evals.filter((e) => !e.failed && e.source === "analyse" && c.aiEstimates[e.sel.id]?.crossLeague).length;
   return (
     <View style={s.total}>
       <View style={s.totalCenter}>
@@ -120,6 +129,7 @@ function Total({ c, analysis }: { c: Controller; analysis: CouponAnalysis }) {
         <Note>{analysis.pending > 1 ? `${analysis.pending} sélections n'ont` : "1 sélection n'a"} pas d'analyse chiffrée : le pourcentage est indicatif. Appuyez sur « Analyser ».</Note>
       ) : null}
       {analysis.sameMatch ? <Note>Plusieurs paris portent sur le même match : ils sont liés entre eux, le pourcentage combiné peut être inexact.</Note> : null}
+      {crossCount > 0 ? <Note>{crossTotalNote(crossCount)}</Note> : null}
       {!indicative && draft.length > 1 && analysis.combinedWithout !== null ? (
         <Txt style={s.fragile}>
           Sélection la plus fragile : {weak1} vs {weak2} ({pct(analysis.weakest.p)}). Sans elle : {pct(analysis.combinedWithout)}.
@@ -174,7 +184,9 @@ export default function CouponScreen({ c }: { c: Controller }) {
         />
         <BetTypePicker value={form.typePari} onChange={(v) => c.setForm((f) => ({ ...f, typePari: v }))} />
         <Btn label="Ajouter" icon="plus" kind="dashed" onPress={c.addToDraft} />
-        <Text style={s.hint}>L'équipe 1 reçoit (domicile), l'équipe 2 se déplace : « Victoire domicile » désigne l'équipe 1.</Text>
+        <Text style={s.hint}>
+          L'équipe 1 reçoit (domicile), l'équipe 2 se déplace : « Victoire domicile » désigne l'équipe 1. Les deux clubs peuvent venir de championnats différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
+        </Text>
       </Card>
 
       {draft.length > 0 ? (

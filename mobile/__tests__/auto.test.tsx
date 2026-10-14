@@ -1,7 +1,7 @@
 import { fireEvent, screen } from "@testing-library/react-native";
 import { button, openApp, openTab, resetStorage, typeAutoMatch } from "../test-support/app";
 import { installFetch } from "../test-support/fakeServer";
-import { okLeg } from "../test-support/fixtures";
+import { CROSS_MESSAGE, cupLeg, okLeg } from "../test-support/fixtures";
 
 beforeEach(resetStorage);
 afterEach(() => {
@@ -119,3 +119,40 @@ describe("onglet Auto", () => {
     await screen.findByText("Coupon (1 match)");
   });
 });
+
+describe("onglet Auto : n'importe quel match", () => {
+  test("un match de Ligue des champions est analysé, ajouté au coupon avec son avertissement", async () => {
+    const calls = installFetch({
+      "POST /api/auto-coupon": () => ({
+        body: { resultats: [{ index: 0, ...cupLeg({ typePari: "Victoire ou nul domicile", probabilite: 66.4 }) }], analyses: 1 },
+      }),
+    });
+    await openApp();
+    await openTab("Auto");
+    await typeAutoMatch("Arsenal", "Real Madrid");
+    await fireEvent.press(button("Générer mon coupon"));
+    await screen.findByText("Coupon (1 match)");
+    expect(calls[0].body).toEqual({ matches: [{ equipe1: "Arsenal", equipe2: "Real Madrid" }] });
+    expect(screen.getAllByText("66 %").length).toBeGreaterThan(0);
+    expect(screen.getByText(/^UEFA Champions League · /)).toBeOnTheScreen();
+    expect(screen.getByText(CROSS_MESSAGE)).toBeOnTheScreen();
+  });
+
+  test("un match entre deux clubs du même championnat n'a pas cet avertissement", async () => {
+    installFetch({ "POST /api/auto-coupon": () => ({ body: { resultats: [{ index: 0, ...okLeg() }] } }) });
+    await openApp();
+    await openTab("Auto");
+    await typeAutoMatch("Arsenal", "Chelsea");
+    await fireEvent.press(button("Générer mon coupon"));
+    await screen.findByText("Coupon (1 match)");
+    expect(screen.queryByText(/ne jouent pas dans le même championnat/)).not.toBeOnTheScreen();
+  });
+
+  test("l'écran le dit : les deux clubs peuvent venir de championnats différents", async () => {
+    installFetch({});
+    await openApp();
+    await openTab("Auto");
+    expect(screen.getByText(/Les deux clubs peuvent venir de championnats différents \(Ligue des champions, par exemple\)/)).toBeOnTheScreen();
+  });
+});
+
