@@ -3,7 +3,15 @@
 const league = (key, nom) => ({ key, nom, pays: "X", charge: true });
 export const CATALOG = {
   complet: true,
-  championnats: [league("PL", "Premier League"), league("FL1", "Ligue 1"), league("PD", "Liga"), league("SA", "Serie A"), league("BL1", "Bundesliga")],
+  championnats: [
+    league("PL", "Premier League"),
+    league("FL1", "Ligue 1"),
+    league("PD", "Liga"),
+    league("SA", "Serie A"),
+    league("BL1", "Bundesliga"),
+    league("PPL", "Liga Portugal"),
+    league("EUR", "Autres clubs européens"), // clubs connus seulement par les coupes d'Europe
+  ],
   equipes: [
     { nom: "Arsenal", championnat: "PL", noms: ["Arsenal FC", "The Gunners"] },
     { nom: "Manchester City", championnat: "PL", noms: ["Man City", "Manchester City FC", "Citizens"] },
@@ -21,5 +29,7 @@ export const CATALOG = {
     { nom: "AC Milan", championnat: "SA", noms: ["Milan"] },
     { nom: "Bayern Munich", championnat: "BL1", noms: ["FC Bayern München", "Bayern", "FC Bayern"] },
     { nom: "Borussia Dortmund", championnat: "BL1", noms: ["BVB", "Dortmund"] },
+    { nom: "Benfica", championnat: "PPL", noms: ["SL Benfica"] },
+    { nom: "Dinamo Zagreb", championnat: "EUR", noms: ["GNK Dinamo Zagreb"] },
   ],
 };

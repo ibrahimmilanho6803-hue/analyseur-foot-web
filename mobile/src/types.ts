@@ -32,6 +32,16 @@ export interface Suggestions {
   equipe2?: string[];
 }
 
+/** Présent quand les deux clubs ne jouent pas dans le même championnat (Ligue des champions, par exemple) : l'estimation est moins précise. */
+export interface CrossLeague {
+  championnat1?: string;
+  championnat2?: string;
+  /** Vrai quand le niveau relatif des deux championnats est mesuré par assez de matchs de coupes d'Europe. */
+  niveauDesChampionnatsMesure?: boolean;
+  /** Explication rédigée par le serveur, à afficher telle quelle. */
+  message?: string;
+}
+
 /** Une sélection analysée, telle que la renvoient POST /api/analyze (legs) et POST /api/auto-coupon (resultats). */
 export interface ApiLeg {
   index?: number;
@@ -54,6 +64,7 @@ export interface ApiLeg {
   message?: string;
   suggestions?: Suggestions;
   ia?: IaInfo;
+  comparaisonEntreChampionnats?: CrossLeague | null;
   [autre: string]: unknown;
 }
 
@@ -84,6 +95,7 @@ export interface TopMatch {
   homeAway2?: HomeAway | null;
   h2h?: HeadToHead | null;
   ia?: IaInfo;
+  comparaisonEntreChampionnats?: CrossLeague | null;
 }
 
 export interface TopMatchesResponse {
@@ -99,7 +111,7 @@ export interface TopMatchesResponse {
   complet?: boolean;
   perime?: boolean;
   fenetreHeures?: number;
-  donnees?: { championnatsPrets?: string[] };
+  donnees?: { championnatsPrets?: string[]; coupesPretes?: string[] };
 }
 
 /** Ce qui est gardé du dernier « Top Matchs » pour l'affichage. */
@@ -116,6 +128,8 @@ export interface TopMeta {
   perime?: boolean;
   fenetreHeures?: number;
   nbChampionnats: number | null;
+  /** Coupes d'Europe analysées en plus des championnats (0 ou absent avec un serveur qui n'en propose pas). */
+  nbCoupes?: number;
 }
 
 /** Résultat de l'analyse d'une sélection. p vaut null quand le serveur n'a pas pu chiffrer : aucune probabilité n'est inventée. */
@@ -134,6 +148,8 @@ export interface Estimate {
   h2h?: HeadToHead | null;
   homeAway1?: HomeAway | null;
   homeAway2?: HomeAway | null;
+  /** Renseigné quand les deux clubs viennent de championnats différents. */
+  crossLeague?: CrossLeague;
 }
 
 export type ProbSource = "analyse" | "historique" | "general";

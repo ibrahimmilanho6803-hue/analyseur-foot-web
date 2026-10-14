@@ -7,6 +7,8 @@ Application React qui affiche les pronostics calculés par le serveur
 - **Top Matchs** : les 3 meilleurs matchs à venir, avec la cote combinée *estimée*.
 - **Mon coupon** : saisie de sélections, analyse par le serveur (modèle statistique relu par l'IA), probabilité de chaque sélection et du coupon.
 - **Auto** : le serveur choisit le pari le plus probable de chaque match saisi.
+- **N'importe quel match** : Mon coupon et Auto acceptent deux clubs du même championnat, de championnats différents (Ligue des
+  champions, Ligue Europa, Ligue Conférence…) ou un club que seules les coupes d'Europe font connaître ([voir plus bas](#matchs-entre-championnats-ligue-des-champions)).
 - **Historique** : coupons enregistrés sur l'appareil (stockage local du navigateur).
 
 Le site ne contient aucune clé secrète et n'appelle jamais l'IA directement : tout passe par le serveur. Si une analyse est
@@ -20,10 +22,29 @@ données (« Man City », « Man Utd »…), les débuts de mots (« man c » �
 d'autre ne correspond. Clavier : ↓ ↑ pour parcourir, Entrée pour choisir, Échap pour fermer. Quand rien ne correspond, un message le
 dit, mais la saisie libre reste possible : le serveur est seul juge de la reconnaissance du nom.
 
-- La liste vient de `GET /api/teams` (serveur à jour requis). Elle est gardée sur l'appareil (clé `coupon-clubs`) : 24 h quand elle
-  est complète, 1 minute seulement tant que des championnats sont encore en chargement sur le serveur ou que le serveur n'a pas répondu.
+- La liste vient de `GET /api/teams` (serveur à jour requis) : les clubs de tous les championnats suivis par le serveur (une trentaine,
+  de la Premier League aux championnats complémentaires) et, sous « Autres clubs européens », ceux que seules les coupes d'Europe
+  font connaître. Elle est gardée sur l'appareil (clé `coupon-clubs`) : 24 h quand elle est complète, 1 minute seulement tant que des
+  championnats sont encore en chargement sur le serveur ou que le serveur n'a pas répondu.
+- Cette liste porte un **numéro de version** (`v: 2`) : une liste enregistrée par une version plus ancienne, qui ne connaissait que les
+  dix championnats principaux, est ignorée et redemandée au serveur, pour ne pas faire croire pendant un jour qu'un club n'est pas suivi.
 - Sans liste (serveur plus ancien, hors ligne, stockage bloqué), les champs restent de simples champs texte et aucune erreur n'est
   affichée : le site fonctionne comme avant.
+
+## Matchs entre championnats (Ligue des champions…)
+
+Le serveur analyse maintenant **n'importe quel match** : deux clubs du même championnat (comme avant), deux clubs de championnats
+différents (Ligue des champions, Ligue Europa, Ligue Conférence) ou un club que le serveur ne connaît que par les coupes d'Europe.
+Pour deux clubs de championnats différents, le niveau relatif des deux championnats est estimé d'après les matchs de coupes
+d'Europe : le résultat est **moins précis** qu'entre deux clubs d'un même championnat, et l'application le dit :
+
+- sous chaque pari concerné (Mon coupon, résultat d'Auto, carte du Top Matchs), un avertissement doré reprend le texte du serveur
+  (`comparaisonEntreChampionnats.message`), qui précise la raison — niveau des championnats mesuré par des matchs de coupe, estimation
+  générale seulement, ou club d'un championnat non suivi ;
+- sous le total du coupon, une mise en garde indique combien de sélections sont concernées : le pourcentage combiné en hérite ;
+- le Top Matchs annonce les coupes d'Europe analysées en plus des championnats (`donnees.coupesPretes`).
+
+Avec un serveur plus ancien, ces informations n'existent pas et rien ne s'affiche en plus : le comportement est celui d'avant.
 
 ## Analyse en deux temps
 

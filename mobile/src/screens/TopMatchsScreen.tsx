@@ -1,6 +1,7 @@
 import React from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
+import { crossLeagueNote, asCross } from "../estimates";
 import { confidenceLabel, formatDate } from "../format";
 import type { Controller } from "../hooks/useAnalyseur";
 import { F, T, alpha } from "../theme";
@@ -12,6 +13,7 @@ function probColor(p: number): string {
 }
 
 function MatchCard({ match, first, showDetails, added, onAdd }: { match: TopMatch; first: boolean; showDetails: boolean; added: boolean; onAdd: () => void }) {
+  const cross = asCross(match.comparaisonEntreChampionnats); // clubs de championnats différents (Ligue des champions…)
   return (
     <View style={[s.match, first && s.matchFirst]}>
       <View style={s.matchHead}>
@@ -36,6 +38,7 @@ function MatchCard({ match, first, showDetails, added, onAdd }: { match: TopMatc
         <Text style={s.meta}>Confiance : {confidenceLabel(match.niveauConfiance)}</Text>
         {typeof match.coteEstimee === "number" ? <Text style={s.metaPlain}>Cote estimée {match.coteEstimee.toFixed(2)}</Text> : null}
       </View>
+      {cross ? <Note>{crossLeagueNote(cross)}</Note> : null}
       {showDetails && match.justification ? <Txt style={s.reason}>{match.justification}</Txt> : null}
       {showDetails && match.vigilance ? <Txt style={s.vigilance}>À surveiller : {match.vigilance}</Txt> : null}
       <Btn label={added ? "Déjà dans le coupon" : "Ajouter ce pronostic"} onPress={onAdd} disabled={added} compact />
@@ -49,6 +52,8 @@ export default function TopMatchsScreen({ c }: { c: Controller }) {
   const iaDown = Boolean(topMeta && topMeta.ia && (topMeta.ia.statut === "indisponible" || topMeta.ia.statut === "partielle"));
   const iaOff = Boolean(topMeta && topMeta.ia && topMeta.ia.statut === "desactivee");
   const nb = topMeta ? topMeta.nbChampionnats : null;
+  const nbCups = topMeta && topMeta.nbCoupes ? topMeta.nbCoupes : 0;
+  const scope = nb ? `${nb} championnat${nb > 1 ? "s" : ""}${nbCups > 0 ? ` et ${nbCups} coupe${nbCups > 1 ? "s" : ""} d'Europe` : ""}` : "";
 
   return (
     <Card accent>
@@ -59,7 +64,7 @@ export default function TopMatchsScreen({ c }: { c: Controller }) {
         </Txt>
       </View>
       <Txt style={s.sub}>
-        {nb ? `Analyse de ${nb} championnat${nb > 1 ? "s" : ""}, matchs des ${topMeta ? topMeta.fenetreHeures : ""} prochaines heures.` : "Analyse des championnats couverts par le serveur."}
+        {nb ? `Analyse de ${scope}, matchs des ${topMeta ? topMeta.fenetreHeures : ""} prochaines heures.` : "Analyse des championnats couverts par le serveur."}
       </Txt>
 
       {topLoading ? (

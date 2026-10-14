@@ -1,12 +1,20 @@
 // Données de test partagées (ce dossier n'est pas inclus dans l'application construite).
 import type { Catalog } from "../src/suggest";
-import type { ApiLeg, TopMatch, TopMatchesResponse } from "../src/types";
+import type { ApiLeg, CrossLeague, TopMatch, TopMatchesResponse } from "../src/types";
 
 // Liste telle que la renvoie GET /api/teams (extrait).
 const league = (key: string, nom: string) => ({ key, nom, pays: "X", charge: true });
 export const CATALOG = {
   complet: true,
-  championnats: [league("PL", "Premier League"), league("FL1", "Ligue 1"), league("PD", "Liga"), league("SA", "Serie A"), league("BL1", "Bundesliga")],
+  championnats: [
+    league("PL", "Premier League"),
+    league("FL1", "Ligue 1"),
+    league("PD", "Liga"),
+    league("SA", "Serie A"),
+    league("BL1", "Bundesliga"),
+    league("PPL", "Liga Portugal"),
+    league("EUR", "Autres clubs européens"), // clubs connus seulement par les coupes d'Europe
+  ],
   equipes: [
     { nom: "Arsenal", championnat: "PL", noms: ["Arsenal FC", "The Gunners"] },
     { nom: "Manchester City", championnat: "PL", noms: ["Man City", "Manchester City FC", "Citizens"] },
@@ -24,6 +32,8 @@ export const CATALOG = {
     { nom: "AC Milan", championnat: "SA", noms: ["Milan"] },
     { nom: "Bayern Munich", championnat: "BL1", noms: ["FC Bayern München", "Bayern", "FC Bayern"] },
     { nom: "Borussia Dortmund", championnat: "BL1", noms: ["BVB", "Dortmund"] },
+    { nom: "Benfica", championnat: "PPL", noms: ["SL Benfica"] },
+    { nom: "Dinamo Zagreb", championnat: "EUR", noms: ["GNK Dinamo Zagreb"] },
   ],
 } satisfies Catalog;
 
@@ -86,3 +96,19 @@ export const reviewed = (over: ApiLeg = {}): ApiLeg =>
 
 export const parisLeg = (over: ApiLeg = {}): ApiLeg =>
   okLeg({ equipe1: "Paris SG", equipe2: "Marseille", competition: "Ligue 1", date: "2026-10-18T19:45:00.000Z", ...over });
+
+// Comparaison renvoyée par le serveur quand les deux clubs ne jouent pas dans le même championnat (Ligue des champions…).
+export const CROSS_MESSAGE =
+  "Ces deux clubs ne jouent pas dans le même championnat : leur niveau relatif est estimé grâce aux matchs de coupes d'Europe. Estimation moins précise qu'entre deux clubs d'un même championnat.";
+export const CROSS_WEAK_MESSAGE =
+  "L'un de ces clubs ne joue dans aucun championnat suivi par l'application : son niveau n'est estimé que d'après ses matchs de coupes d'Europe. Estimation peu précise.";
+export const cross = (over: CrossLeague = {}): CrossLeague => ({
+  championnat1: "Premier League",
+  championnat2: "Liga",
+  niveauDesChampionnatsMesure: true,
+  message: CROSS_MESSAGE,
+  ...over,
+});
+/** Une analyse de Ligue des champions : Arsenal (Premier League) reçoit le Real Madrid (Liga). */
+export const cupLeg = (over: ApiLeg = {}): ApiLeg =>
+  okLeg({ equipe1: "Arsenal", equipe2: "Real Madrid", competition: "UEFA Champions League", date: "2026-10-21T19:00:00.000Z", comparaisonEntreChampionnats: cross(), ...over });

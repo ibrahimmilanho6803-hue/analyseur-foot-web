@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react-native";
 import { addMatch, button, chooseBet, openApp, openTab, readStored, resetStorage, team1, team2 } from "../test-support/app";
 import type { Calls } from "../test-support/fakeServer";
 import { installFetch } from "../test-support/fakeServer";
-import { okLeg, parisLeg, quick, reviewed, topPayload } from "../test-support/fixtures";
+import { CROSS_MESSAGE, CROSS_WEAK_MESSAGE, cross, cupLeg, okLeg, parisLeg, quick, reviewed, topPayload } from "../test-support/fixtures";
 
 beforeEach(resetStorage);
 afterEach(() => {
@@ -384,5 +384,73 @@ describe("coupon bâti depuis le Top Matchs", () => {
     await fireEvent.press(button("Analyser"));
     await waitFor(() => expect(screen.getAllByText("70 %").length).toBeGreaterThan(0));
     expect(calls.filter((c) => c.path === "/api/analyze")).toHaveLength(1);
+  });
+});
+
+// Ligue des champions, autres championnats : le serveur analyse maintenant n'importe quel match, en signalant ceux qui sont moins précis.
+describe("clubs de championnats différents", () => {
+  test("l'avertissement du serveur est toujours visible sous le pari concerné, et le total le rappelle", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [cupLeg(), okLeg({ equipe1: "Inter", equipe2: "Torino", typePari: "Match nul", probabilite: 30 })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Real Madrid", "Plus de 1.5 buts");
+    await addMatch("Inter", "Torino", "Match nul");
+    expect(screen.queryByText(CROSS_MESSAGE)).not.toBeOnTheScreen(); // rien avant l'analyse
+    await fireEvent.press(button("Analyser"));
+    expect(await screen.findByText(CROSS_MESSAGE)).toBeOnTheScreen(); // sans avoir ouvert « Détails »
+    expect(screen.getAllByText(CROSS_MESSAGE)).toHaveLength(1); // Inter – Torino n'est pas concerné
+    expect(screen.getByText(/^UEFA Champions League · /)).toBeOnTheScreen();
+    expect(screen.getByText("1 sélection oppose des clubs de championnats différents : son estimation est moins précise, le pourcentage combiné aussi.")).toBeOnTheScreen();
+  });
+
+  test("deux sélections concernées : le total le dit au pluriel, chaque pari garde son avertissement", async () => {
+    installFetch({
+      "POST /api/analyze": () => ({ body: { legs: [cupLeg(), cupLeg({ equipe1: "Inter", equipe2: "Benfica", typePari: "Match nul", probabilite: 30, comparaisonEntreChampionnats: cross({ message: CROSS_WEAK_MESSAGE }) })] } }),
+    });
+    await openApp();
+    await addMatch("Arsenal", "Real Madrid", "Plus de 1.5 buts");
+    await addMatch("Inter", "Benfica", "Match nul");
+    await fireEvent.press(button("Analyser"));
+    expect(await screen.findByText(CROSS_MESSAGE)).toBeOnTheScreen();
+    expect(screen.getByText(CROSS_WEAK_MESSAGE)).toBeOnTheScreen(); // le texte du serveur, tel quel (club d'un championnat non suivi)
+    expect(screen.getByText(/2 sélections opposent des clubs de championnats différents/)).toBeOnTheScreen();
+  });
+
+  test("la relecture de l'IA ne fait pas disparaître l'avertissement", async () => {
+    installFetch({
+      "POST /api/analyze": (body) => ({ body: { legs: [body.ia === false ? quick({ comparaisonEntreChampionnats: cross() }) : reviewed({ comparaisonEntreChampionnats: cross() })] } }),
+    });
+    await openApp();
+    await addMatch("Arsenal", "Real Madrid", "Plus de 1.5 buts");
+    await fireEvent.press(button("Analyser"));
+    await screen.findAllByText("63 %"); // relecture arrivée
+    expect(screen.getAllByText(CROSS_MESSAGE)).toHaveLength(1);
+  });
+
+  test("deux clubs du même championnat : aucun avertissement de ce genre", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [okLeg()] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    await fireEvent.press(button("Analyser"));
+    await screen.findAllByText("62 %");
+    expect(screen.queryByText(/oppos(e|ent) des clubs de championnats différents/)).not.toBeOnTheScreen(); // la mise en garde sur le total
+    expect(screen.queryByText(/ne jouent pas dans le même championnat/)).not.toBeOnTheScreen(); // celle du pari
+  });
+
+  test("une sélection dont l'analyse a échoué ne compte pas parmi celles à signaler", async () => {
+    installFetch({
+      "POST /api/analyze": () => ({ body: { legs: [cupLeg(), { etat: "equipe_inconnue", probabilite: null, message: "Équipe introuvable : vérifiez l'orthographe.", suggestions: { equipe1: [], equipe2: [] } }] } }),
+    });
+    await openApp();
+    await addMatch("Arsenal", "Real Madrid", "Plus de 1.5 buts");
+    await addMatch("Xyz", "Abc", "Match nul");
+    await fireEvent.press(button("Analyser"));
+    await screen.findByText(/Équipe introuvable/);
+    expect(screen.getByText(/^1 sélection oppose des clubs/)).toBeOnTheScreen();
+  });
+
+  test("le texte d'aide rappelle que les deux clubs peuvent venir de championnats différents", async () => {
+    installFetch({});
+    await openApp();
+    expect(screen.getByText(/Les deux clubs peuvent venir de championnats différents \(Ligue des champions, par exemple\)/)).toBeOnTheScreen();
   });
 });

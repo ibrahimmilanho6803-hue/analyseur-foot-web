@@ -1,8 +1,21 @@
 // Lecture des réponses du serveur et estimation de la probabilité d'une sélection (même logique que le site).
 import { BASELINE_RATES, canonicalLabel } from "./betTypes";
-import type { ApiLeg, Estimate, ProbEstimate, Pronostic, Selection, TopMatch } from "./types";
+import type { ApiLeg, CrossLeague, Estimate, ProbEstimate, Pronostic, Selection, TopMatch } from "./types";
 
 export const clampP = (p: number): number => Math.min(0.99, Math.max(0.01, p));
+
+// Comparaison entre championnats renvoyée par le serveur (clubs de championnats différents) ; absente pour deux clubs du même championnat.
+export function asCross(raw: unknown): CrossLeague | undefined {
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as CrossLeague) : undefined;
+}
+
+// Avertissement à montrer à côté d'un pronostic entre clubs de championnats différents : le texte du serveur (il dit pourquoi
+// l'estimation est moins précise), ou à défaut une phrase générale.
+export function crossLeagueNote(cross: CrossLeague | null | undefined): string | null {
+  if (!cross) return null;
+  const message = typeof cross.message === "string" ? cross.message.trim() : "";
+  return message || "Ces deux clubs ne jouent pas dans le même championnat : estimation moins précise qu'entre deux clubs d'un même championnat.";
+}
 
 // Transforme la réponse du serveur pour une sélection. Sans analyse chiffrée, p vaut null : aucune probabilité n'est inventée.
 export function toEstimate(r: ApiLeg | null | undefined): Estimate {
@@ -23,9 +36,10 @@ export function toEstimate(r: ApiLeg | null | undefined): Estimate {
       h2h: r.h2h,
       homeAway1: r.homeAway1,
       homeAway2: r.homeAway2,
+      crossLeague: asCross(r.comparaisonEntreChampionnats),
     };
   }
-  const sug = r.suggestions ? [...(r.suggestions.equipe1 || []), ...(r.suggestions.equipe2 || [])].slice(0, 4) : [];
+  const sug =r.suggestions ? [...(r.suggestions.equipe1 || []), ...(r.suggestions.equipe2 || [])].slice(0, 4) : [];
   return { p: null, message: (r.message || "Analyse impossible pour cette sélection.") + (sug.length ? ` Suggestions : ${sug.join(", ")}.` : "") };
 }
 
@@ -95,5 +109,6 @@ export function fromTopMatch(m: TopMatch | null | undefined): Estimate {
     h2h: m.h2h,
     homeAway1: m.homeAway1,
     homeAway2: m.homeAway2,
+    crossLeague: asCross(m.comparaisonEntreChampionnats),
   };
 }

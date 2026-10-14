@@ -1,6 +1,6 @@
-import { awaitsReview, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, toEstimate } from "../src/estimates";
+import { asCross, awaitsReview, crossLeagueNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, toEstimate } from "../src/estimates";
 import type { Estimate } from "../src/types";
-import { okLeg, quick, topEntry } from "../test-support/fixtures";
+import { CROSS_MESSAGE, CROSS_WEAK_MESSAGE, cross, cupLeg, okLeg, quick, topEntry } from "../test-support/fixtures";
 
 describe("estimation d'une sélection", () => {
   const sel = { id: "a", typePari: "Plus de 1.5 buts" };
@@ -123,5 +123,40 @@ describe("fusion des estimations", () => {
     expect(awaitsReview(quick({ ia: { statut: "non_applicable" } }))).toBe(false);
     expect(awaitsReview({ etat: "equipe_inconnue", ia: { statut: "non_demandee" } })).toBe(false);
     expect(awaitsReview(undefined)).toBe(false);
+  });
+});
+
+describe("clubs de championnats différents", () => {
+  test("la comparaison du serveur est gardée avec l'estimation (analyse, Auto et Top Matchs)", () => {
+    expect(toEstimate(cupLeg()).crossLeague).toEqual(cross());
+    expect(fromTopMatch(topEntry(0, { comparaisonEntreChampionnats: cross() })).crossLeague).toEqual(cross());
+    expect(toEstimate(cupLeg()).p).toBeCloseTo(0.623, 5); // la probabilité, elle, ne change pas
+  });
+
+  test("deux clubs du même championnat, ou serveur plus ancien : rien à signaler", () => {
+    expect(toEstimate(okLeg()).crossLeague).toBeUndefined();
+    expect(toEstimate(okLeg({ comparaisonEntreChampionnats: null })).crossLeague).toBeUndefined();
+    expect(fromTopMatch(topEntry(0)).crossLeague).toBeUndefined();
+    expect(fromTopMatch(topEntry(0, { comparaisonEntreChampionnats: null })).crossLeague).toBeUndefined();
+  });
+
+  test("une valeur qui n'est pas un objet est ignorée", () => {
+    expect(toEstimate(okLeg({ comparaisonEntreChampionnats: "oui" as never })).crossLeague).toBeUndefined();
+    expect(asCross([cross()])).toBeUndefined();
+    expect(asCross(42)).toBeUndefined();
+    expect(asCross(cross())).toEqual(cross());
+  });
+
+  test("l'avertissement affiché est celui du serveur, ou à défaut une phrase générale", () => {
+    expect(crossLeagueNote(cross())).toBe(CROSS_MESSAGE);
+    expect(crossLeagueNote(cross({ niveauDesChampionnatsMesure: false, message: CROSS_WEAK_MESSAGE }))).toBe(CROSS_WEAK_MESSAGE);
+    expect(crossLeagueNote({ championnat1: "Premier League" })).toMatch(/ne jouent pas dans le même championnat/);
+    expect(crossLeagueNote({ message: "   " })).toMatch(/estimation moins précise/);
+    expect(crossLeagueNote(undefined)).toBeNull();
+    expect(crossLeagueNote(null)).toBeNull();
+  });
+
+  test("une analyse impossible n'emporte aucune comparaison", () => {
+    expect(toEstimate({ etat: "equipe_inconnue", probabilite: null, message: "Équipe introuvable.", comparaisonEntreChampionnats: cross() }).crossLeague).toBeUndefined();
   });
 });

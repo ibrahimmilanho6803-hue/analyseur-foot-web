@@ -1,7 +1,7 @@
 import { fireEvent, screen } from "@testing-library/react-native";
 import { button, openApp, openTab, resetStorage } from "../test-support/app";
 import { installFetch } from "../test-support/fakeServer";
-import { topEntry, topPayload } from "../test-support/fixtures";
+import { CROSS_MESSAGE, cross, topEntry, topPayload } from "../test-support/fixtures";
 
 beforeEach(resetStorage);
 afterEach(() => {
@@ -123,3 +123,44 @@ describe("onglet Top Matchs", () => {
     expect(screen.getByText(/^Premier League · /)).toBeOnTheScreen();
   });
 });
+
+describe("onglet Top Matchs : coupes d'Europe", () => {
+  const leagues = ["PL", "PD", "SA", "BL1", "FL1", "PPL", "DED", "BSA"];
+
+  test("le sous-titre compte aussi les coupes d'Europe analysées", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ donnees: { championnatsPrets: leagues, coupesPretes: ["CL", "EL", "UECL"] } }) }) });
+    await openApp();
+    await openTab("Top Matchs");
+    expect(await screen.findByText(/Analyse de 8 championnats et 3 coupes d'Europe, matchs des 72 prochaines heures/)).toBeOnTheScreen();
+  });
+
+  test("une seule coupe : singulier ; aucune coupe (serveur plus ancien) : la phrase d'avant", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ donnees: { championnatsPrets: leagues, coupesPretes: ["CL"] } }) }) });
+    await openApp();
+    await openTab("Top Matchs");
+    expect(await screen.findByText(/Analyse de 8 championnats et 1 coupe d'Europe, matchs/)).toBeOnTheScreen();
+  });
+
+  test("sans coupe annoncée, le sous-titre ne parle pas de coupes", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ donnees: { championnatsPrets: leagues, coupesPretes: [] } }) }) });
+    await openApp();
+    await openTab("Top Matchs");
+    expect(await screen.findByText(/Analyse de 8 championnats, matchs des 72 prochaines heures/)).toBeOnTheScreen();
+    expect(screen.queryByText(/coupe/)).not.toBeOnTheScreen();
+  });
+
+  test("un match de coupe entre deux championnats porte l'avertissement du serveur, et le garde dans le coupon", async () => {
+    const entries = [topEntry(0, { competition: "UEFA Champions League", comparaisonEntreChampionnats: cross() }), topEntry(1), topEntry(2)];
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ topMatches: entries }) }) });
+    await openApp();
+    await openTab("Top Matchs");
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getByText("UEFA Champions League")).toBeOnTheScreen();
+    expect(screen.getAllByText(CROSS_MESSAGE)).toHaveLength(1); // seul ce match est concerné
+    await fireEvent.press(screen.getAllByRole("button", { name: "Ajouter ce pronostic" })[0]);
+    await openTab("Mon coupon");
+    expect(screen.getByText(CROSS_MESSAGE)).toBeOnTheScreen();
+    expect(screen.getByText(/^1 sélection oppose des clubs de championnats différents/)).toBeOnTheScreen();
+  });
+});
+
