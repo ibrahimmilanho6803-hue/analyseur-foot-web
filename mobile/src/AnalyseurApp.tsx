@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
-import { BackHandler, KeyboardAvoidingView, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, BackHandler, Image, KeyboardAvoidingView, ScrollView, StyleSheet, Text, View } from "react-native";
+import Feather from "@expo/vector-icons/Feather";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import TabBar from "./components/TabBar";
 import { useAnalyseur } from "./hooks/useAnalyseur";
@@ -8,8 +9,11 @@ import AutoScreen from "./screens/AutoScreen";
 import CouponScreen from "./screens/CouponScreen";
 import HistoryScreen from "./screens/HistoryScreen";
 import TopMatchsScreen from "./screens/TopMatchsScreen";
-import { F, T } from "./theme";
+import { F, RD, SP, T, alpha } from "./theme";
 import { Bold, Txt } from "./ui";
+
+// Pastille de l'application (même dessin que l'icône du téléphone), en petit.
+const LOGO = require("../assets/logo.png");
 
 // Mention affichée en bas de chaque écran : mêmes termes que sur le site.
 export const DISCLAIMER =
@@ -41,6 +45,8 @@ export default function AnalyseurApp() {
   if (c.loading) {
     return (
       <View style={[s.root, s.center, { paddingTop: insets.top }]}>
+        <Image source={LOGO} style={s.logoBig} aria-hidden />
+        <ActivityIndicator color={T.gold} style={s.spinner} />
         <Txt style={s.loading}>Chargement…</Txt>
       </View>
     );
@@ -54,21 +60,33 @@ export default function AnalyseurApp() {
         <ScrollView
           ref={scroller}
           style={s.flex}
-          contentContainerStyle={[s.content, { paddingLeft: 12 + insets.left, paddingRight: 12 + insets.right }]}
+          contentContainerStyle={[s.content, { paddingLeft: SP.lg + insets.left, paddingRight: SP.lg + insets.right }]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
         >
           <View style={s.header}>
-            <Text role="heading" style={s.title}>
-              Analyseur Foot Pro
-            </Text>
+            <View style={s.brand}>
+              <Image source={LOGO} style={s.logo} aria-hidden />
+              <View style={s.brandText}>
+                <Text role="heading" style={s.title}>
+                  Analyseur Foot Pro
+                </Text>
+                <Txt style={s.tagline}>Pronostics football : statistiques et IA</Txt>
+              </View>
+            </View>
             <View style={s.stats}>
-              <Txt style={s.stat}>
-                Réussite : <Bold style={{ color: T.gold }}>{stats.rate !== null ? `${stats.rate} %` : "-"}</Bold>
-              </Txt>
-              <Txt style={s.stat}>
-                Clôturés : <Bold>{stats.closedCount}</Bold>
-              </Txt>
+              <View style={s.stat}>
+                <Feather name="target" size={16} color={T.gold} />
+                <Txt style={s.statText}>
+                  Réussite : <Bold style={{ color: T.gold }}>{stats.rate !== null ? `${stats.rate} %` : "-"}</Bold>
+                </Txt>
+              </View>
+              <View style={s.stat}>
+                <Feather name="check-circle" size={16} color={T.chalkDim} />
+                <Txt style={s.statText}>
+                  Clôturés : <Bold>{stats.closedCount}</Bold>
+                </Txt>
+              </View>
             </View>
           </View>
 
@@ -89,11 +107,18 @@ const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: T.bgDeep },
   flex: { flex: 1 },
   center: { alignItems: "center", justifyContent: "center" },
+  logoBig: { width: 72, height: 72, borderRadius: 18, marginBottom: SP.lg },
+  spinner: { marginBottom: SP.sm },
   loading: { color: T.chalkDim },
-  content: { paddingTop: 4, paddingBottom: 16 },
-  header: { alignItems: "center", paddingTop: 10, paddingBottom: 14 },
-  title: { fontFamily: F.title, fontSize: 24, letterSpacing: 1, color: T.chalk },
-  stats: { flexDirection: "row", gap: 14, marginTop: 4 },
-  stat: { fontSize: 12, color: T.chalkDim },
-  disclaimer: { fontSize: 11, lineHeight: 16, color: T.chalkDim, textAlign: "center", paddingHorizontal: 8, paddingTop: 10, paddingBottom: 8 },
+  content: { paddingTop: SP.sm, paddingBottom: SP.lg },
+  header: { paddingTop: SP.sm, paddingBottom: SP.lg, gap: SP.md },
+  brand: { flexDirection: "row", alignItems: "center", gap: SP.md },
+  logo: { width: 46, height: 46, borderRadius: 12, borderWidth: 1, borderColor: alpha(T.gold, 0.35) },
+  brandText: { flex: 1 },
+  title: { fontFamily: F.title, fontSize: 25, lineHeight: 30, letterSpacing: 0.6, color: T.chalk },
+  tagline: { fontSize: 12.5, color: T.chalkDim, marginTop: 1 },
+  stats: { flexDirection: "row", gap: SP.sm },
+  stat: { flex: 1, flexDirection: "row", alignItems: "center", gap: SP.sm, backgroundColor: T.surface, borderColor: T.line, borderWidth: 1, borderRadius: RD.md, paddingVertical: 10, paddingHorizontal: SP.md },
+  statText: { fontSize: 13, color: T.chalkDim },
+  disclaimer: { fontSize: 11, lineHeight: 16, color: T.faint, textAlign: "center", paddingHorizontal: SP.sm, paddingTop: SP.md, paddingBottom: SP.sm },
 });

@@ -1,11 +1,11 @@
 import React from "react";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import TeamInput from "../components/TeamInput";
 import type { Controller } from "../hooks/useAnalyseur";
-import { F, T } from "../theme";
-import { Btn, Card, IconBtn, LinkBtn, SectionTitle, Txt } from "../ui";
+import { F, RD, SP, T, alpha } from "../theme";
+import { Btn, Card, IconBtn, LinkBtn, Note, SectionTitle, Txt } from "../ui";
 
-// Onglet « Auto » : on saisit des matchs, le serveur choisit le pari le plus sûr de chacun.
+// Onglet « Auto » : on saisit des matchs, le serveur choisit le pari le plus fiable de chacun.
 export default function AutoScreen({ c }: { c: Controller }) {
   const { genForm, catalog, matchesToGenerate, genReport, genLoading } = c;
   const empty = matchesToGenerate.length === 0;
@@ -13,15 +13,16 @@ export default function AutoScreen({ c }: { c: Controller }) {
 
   return (
     <Card>
-      <SectionTitle>Génération automatique</SectionTitle>
+      <SectionTitle icon="cpu">Génération automatique</SectionTitle>
       <Txt style={s.intro}>
-        Saisissez des matchs : le serveur choisit pour chacun le pari le plus sûr dont la probabilité reste intéressante (entre 55 % et 88 %). L'équipe 1 reçoit, l'équipe 2 se déplace. Les deux clubs peuvent venir de championnats
+        Saisissez des matchs : le serveur choisit pour chacun le pari le plus fiable, c'est-à-dire le plus probable, quelle que soit sa cote. L'équipe 1 reçoit, l'équipe 2 se déplace. Les deux clubs peuvent venir de championnats
         différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
       </Txt>
 
       <TeamInput
         label="Équipe 1 du match à générer"
         placeholder="Équipe 1"
+        icon="home"
         value={genForm.equipe1}
         onChange={(v) => c.setGenForm((f) => ({ ...f, equipe1: v }))}
         index={catalog.index}
@@ -31,18 +32,22 @@ export default function AutoScreen({ c }: { c: Controller }) {
       <TeamInput
         label="Équipe 2 du match à générer"
         placeholder="Équipe 2"
+        icon="map-pin"
         value={genForm.equipe2}
         onChange={(v) => c.setGenForm((f) => ({ ...f, equipe2: v }))}
         index={catalog.index}
         complete={catalog.complete}
         onFocus={catalog.refresh}
       />
-      <Btn label="Ajouter" icon="plus" kind="dashed" onPress={c.addMatchToGenerate} />
+      <Btn label="Ajouter" icon="plus" kind="secondary" onPress={c.addMatchToGenerate} />
 
       {empty ? null : (
         <View style={s.list}>
-          {matchesToGenerate.map((m) => (
+          {matchesToGenerate.map((m, i) => (
             <View key={m.id} style={s.item}>
+              <View style={s.rank}>
+                <Text style={s.rankText}>{i + 1}</Text>
+              </View>
               <Txt style={s.itemText}>
                 {m.equipe1} vs {m.equipe2}
               </Txt>
@@ -53,25 +58,23 @@ export default function AutoScreen({ c }: { c: Controller }) {
       )}
 
       {genReport ? (
-        <View style={[s.report, { borderColor: found ? T.gold : T.loss }]}>
+        <View style={s.report}>
           {found ? (
             <View style={s.reportOk}>
-              <Txt style={s.reportOkText}>
-                {genReport!.added} pronostic{genReport!.added > 1 ? "s ajoutés" : " ajouté"} à « Mon coupon ».
-              </Txt>
-              <LinkBtn label="Voir mon coupon" onPress={() => c.setActiveTab("build")} color={T.gold} />
+              <Note tone="ok" style={s.reportNote}>{`${genReport.added} pronostic${genReport.added > 1 ? "s ajoutés" : " ajouté"} à « Mon coupon ».`}</Note>
+              <LinkBtn label="Voir mon coupon" icon="arrow-right" onPress={() => c.setActiveTab("build")} color={T.gold} />
             </View>
           ) : null}
           {genReport.problems.map((problem, i) => (
-            <Txt key={i} style={[s.problem, { color: found ? T.gold : T.loss }]}>
+            <Note key={i} tone={found ? "warn" : "bad"} style={s.reportNote}>
               {problem}
-            </Txt>
+            </Note>
           ))}
         </View>
       ) : null}
 
       <View style={s.generate}>
-        <Btn label={genLoading ? "Génération…" : "Générer mon coupon"} onPress={() => void c.generateAutoCoupon()} disabled={empty || genLoading} />
+        <Btn label={genLoading ? "Génération…" : "Générer mon coupon"} icon="zap" onPress={() => void c.generateAutoCoupon()} disabled={empty || genLoading} />
       </View>
       {genLoading ? (
         <View style={s.progress}>
@@ -84,15 +87,16 @@ export default function AutoScreen({ c }: { c: Controller }) {
 }
 
 const s = StyleSheet.create({
-  intro: { fontSize: 13, lineHeight: 18, color: T.chalkDim, marginBottom: 12 },
-  list: { marginTop: 12 },
-  item: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, backgroundColor: T.bgDeep, borderRadius: 8, paddingLeft: 12, paddingRight: 4, paddingVertical: 4, marginBottom: 6 },
-  itemText: { flex: 1, fontSize: 14 },
-  report: { marginTop: 8, padding: 10, backgroundColor: T.bgDeep, borderWidth: 1, borderRadius: 8 },
-  reportOk: { marginBottom: 6, gap: 4 },
-  reportOkText: { color: T.win, fontSize: 13, lineHeight: 18 },
-  problem: { fontSize: 12, lineHeight: 17, marginTop: 2 },
-  generate: { marginTop: 12 },
-  progress: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 10 },
-  progressText: { color: T.chalkDim, fontFamily: F.body, fontSize: 12 },
+  intro: { fontSize: 13, lineHeight: 19, color: T.chalkDim, marginBottom: SP.lg },
+  list: { marginTop: SP.lg, gap: 6 },
+  item: { flexDirection: "row", alignItems: "center", gap: SP.sm, backgroundColor: T.raised, borderColor: T.line, borderWidth: 1, borderRadius: RD.md, paddingLeft: SP.sm, paddingRight: 4, paddingVertical: 4 },
+  rank: { width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: alpha(T.gold, 0.14) },
+  rankText: { fontFamily: F.monoMedium, fontSize: 12, color: T.gold },
+  itemText: { flex: 1, fontSize: 14.5, lineHeight: 20, fontFamily: F.bodyMedium },
+  report: { marginTop: SP.md, gap: 6 },
+  reportOk: { gap: 6, alignItems: "flex-start" },
+  reportNote: { marginTop: 0, alignSelf: "stretch" },
+  generate: { marginTop: SP.lg },
+  progress: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: SP.sm, marginTop: SP.md },
+  progressText: { color: T.chalkDim, fontFamily: F.body, fontSize: 12.5 },
 });

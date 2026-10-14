@@ -50,7 +50,36 @@ describe("onglet Historique", () => {
     expect(screen.getByText("En attente")).toBeOnTheScreen(); // l'ancien : il reste un pari à clôturer
     expect(screen.getByText("Arsenal vs Chelsea - Match nul")).toBeOnTheScreen();
     expect(screen.getByText("Inter vs Torino - Plus de 0.5 buts")).toBeOnTheScreen();
-    expect(screen.getByText("Paris SG vs Marseille - Victoire domicile")).toBeOnTheScreen();
+    expect(screen.getByText("Paris SG vs Marseille - Victoire équipe 1")).toBeOnTheScreen(); // enregistré sous l'ancien nom « Victoire domicile »
+  });
+
+  test("les anciens noms de paris s'affichent sous leur nom actuel, sans toucher à ce qui est enregistré", async () => {
+    await seedHistory([
+      pronostic({ id: "o1", couponId: "c1", typePari: "Total buts 1.5 plus" }),
+      pronostic({ id: "o2", couponId: "c1", typePari: "Victoire/nul extérieur + 2.5 buts plus" }),
+      pronostic({ id: "o3", couponId: "c1", typePari: "Autre" }),
+    ]);
+    await openApp();
+    await openTab("Historique");
+    expect(screen.getByText("Arsenal vs Chelsea - Plus de 1.5 buts")).toBeOnTheScreen();
+    expect(screen.getByText("Arsenal vs Chelsea - Victoire ou nul équipe 2 et plus de 2.5 buts")).toBeOnTheScreen();
+    expect(screen.getByText("Arsenal vs Chelsea - Autre")).toBeOnTheScreen();
+    expect((await savedHistory()).map((p: { typePari: string }) => p.typePari)).toEqual(["Total buts 1.5 plus", "Victoire/nul extérieur + 2.5 buts plus", "Autre"]); // l'enregistrement n'a pas changé
+  });
+
+  test("un pari à ligne entière en attente rappelle le remboursement ; une fois joué, plus de rappel", async () => {
+    await seedHistory([
+      pronostic({ id: "r1", couponId: "c1", typePari: "Plus de 2 buts" }),
+      pronostic({ id: "r2", couponId: "c1", equipe1: "Inter", equipe2: "Torino", typePari: "Match nul" }),
+      pronostic({ id: "r3", couponId: "c1", equipe1: "Paris SG", equipe2: "Marseille", typePari: "Moins de 1 but" }),
+    ]);
+    await openApp();
+    await openTab("Historique");
+    expect(screen.getByText("Remboursé si le match se termine avec exactement 2 buts au total : dans ce cas, supprimez ce pari.")).toBeOnTheScreen();
+    expect(screen.getByText("Remboursé si le match se termine avec exactement 1 but au total : dans ce cas, supprimez ce pari.")).toBeOnTheScreen();
+    expect(screen.getAllByText(/Remboursé si/)).toHaveLength(2); // pas pour « Match nul »
+    await fireEvent.press(screen.getAllByRole("button", { name: "Marquer comme gagné" })[0]);
+    expect(screen.getAllByText(/Remboursé si/)).toHaveLength(1);
   });
 
   test("marquer le dernier pari d'un coupon gagné le fait passer à « Gagné » et met à jour la réussite", async () => {

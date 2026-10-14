@@ -1,13 +1,15 @@
 import React from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import Feather from "@expo/vector-icons/Feather";
 import BetTypePicker from "../components/BetTypePicker";
 import TeamInput from "../components/TeamInput";
-import { crossLeagueNote } from "../estimates";
+import { canonicalLabel, REFUND_WHEN } from "../betTypes";
+import { crossLeagueNote, refundNote } from "../estimates";
 import { confidenceLabel, formatDate, nameDiffers } from "../format";
 import type { Controller, CouponAnalysis, Evaluation } from "../hooks/useAnalyseur";
-import { F, T, alpha } from "../theme";
+import { F, RD, SP, T, alpha, probTone } from "../theme";
 import type { Estimate, HomeAway, Selection } from "../types";
-import { Bold, Btn, Card, IconBtn, LinkBtn, Note, SectionTitle, Txt } from "../ui";
+import { Badge, Bold, Btn, Card, IconBtn, LinkBtn, Note, ProbBar, SectionTitle, Txt } from "../ui";
 
 function verdict(p: number): { label: string; color: string } {
   return p >= 0.5 ? { label: "Jouable", color: T.win } : p >= 0.25 ? { label: "Risqué", color: T.gold } : { label: "Très risqué", color: T.loss };
@@ -45,8 +47,12 @@ function SelectionRow({ sel, ev, ai, showDetails, onRemove }: { sel: Selection; 
   const [name1, name2] = shownNames(sel, ai);
   const typedDiffers = detailed && (nameDiffers(sel.equipe1, name1) || nameDiffers(sel.equipe2, name2));
   const headline = [ai?.competition, formatDate(ai?.date)].filter(Boolean).join(" · ");
+  const analysed = Boolean(ev && !ev.failed && ev.source === "analyse");
+  const tone = !ev ? T.line : ev.failed ? T.gold : ev.source !== "analyse" ? T.lineStrong : probTone(ev.p * 100);
+  // Pari à ligne entière : la mise est rendue quand le résultat tombe pile sur la ligne.
+  const refundRule = REFUND_WHEN[canonicalLabel(sel.typePari)];
   return (
-    <View style={s.sel}>
+    <View style={[s.sel, { borderLeftColor: tone }]}>
       <View style={s.selTop}>
         <View style={s.selInfo}>
           <Txt style={s.selNames}>
@@ -65,7 +71,7 @@ function SelectionRow({ sel, ev, ai, showDetails, onRemove }: { sel: Selection; 
                 ?
               </Text>
             ) : (
-              <Text style={[s.selProb, { color: ev.source !== "analyse" ? T.chalkDim : ev.p >= 0.5 ? T.win : T.loss }]}>
+              <Text style={[s.selProb, { color: ev.source !== "analyse" ? T.chalkDim : probTone(ev.p * 100) }]}>
                 {ev.source !== "analyse" ? "~" : ""}
                 {pct(ev.p)}
               </Text>
@@ -74,10 +80,12 @@ function SelectionRow({ sel, ev, ai, showDetails, onRemove }: { sel: Selection; 
           <IconBtn icon="trash-2" ariaLabel={`Retirer ${name1} vs ${name2}`} onPress={onRemove} />
         </View>
       </View>
+      {ev && !ev.failed ? <ProbBar value={ev.p} color={analysed ? tone : T.lineStrong} height={5} style={s.selBar} /> : null}
       {ev && ev.failed ? <Note>{ev.message}</Note> : null}
       {detailed && ai?.crossLeague ? <Note>{crossLeagueNote(ai.crossLeague)}</Note> : null}
+      {refundRule ? <Note tone="info">{ai?.refund ? refundNote(ai.refund) : `Remboursé si ${refundRule}.`}</Note> : null}
       {detailed && showDetails && ai?.reason ? <Txt style={s.reason}>{ai.reason}</Txt> : null}
-      {detailed && showDetails && ai?.vigilance ? <Txt style={s.vigilance}>{`À surveiller : ${ai.vigilance}`}</Txt> : null}
+      {detailed && showDetails && ai?.vigilance ? <Note>{`À surveiller : ${ai.vigilance}`}</Note> : null}
       {detailed && showDetails && ai?.confidence ? <Txt style={s.confidence}>{`Confiance : ${confidenceLabel(ai.confidence)}`}</Txt> : null}
       {ai?.h2h && showDetails ? (
         <View style={s.h2h}>
@@ -102,29 +110,28 @@ function Total({ c, analysis }: { c: Controller; analysis: CouponAnalysis }) {
   const { draft, showDetails, aiLoading, aiPhase, aiNotice, aiError } = c;
   const indicative = analysis.pending > 0;
   const v = verdict(analysis.combined);
+  const color = indicative ? T.chalkDim : v.color;
   const [weak1, weak2] = shownNames(analysis.weakest.sel, c.aiEstimates[analysis.weakest.sel.id]);
   // Sélections dont les deux clubs viennent de championnats différents : leur estimation est moins précise, et le total aussi.
   const crossCount = analysis.evals.filter((e) => !e.failed && e.source === "analyse" && c.aiEstimates[e.sel.id]?.crossLeague).length;
   return (
     <View style={s.total}>
-      <View style={s.totalCenter}>
-        <Text style={[s.totalProb, { color: indicative ? T.chalkDim : v.color }]}>
-          {indicative ? "~" : ""}
-          {pct(analysis.combined)}
-        </Text>
-        {indicative ? (
-          <View style={[s.badge, { borderColor: T.chalkDim, borderWidth: 1 }]}>
-            <Text style={[s.badgeText, { color: T.chalkDim }]}>Estimation indicative</Text>
-          </View>
-        ) : (
-          <View style={[s.badge, { backgroundColor: v.color }]}>
-            <Text style={[s.badgeText, { color: T.bgDeep }]}>{v.label}</Text>
-          </View>
-        )}
-        {!indicative ? (
-          <Txt style={s.fairOdds}>Cote équitable estimée : {(1 / analysis.combined).toFixed(2)} (sans marge de bookmaker : les cotes réelles seront plus basses)</Txt>
-        ) : null}
+      <View style={s.totalTop}>
+        <View style={s.totalMain}>
+          <Txt style={s.totalLabel}>Probabilité combinée</Txt>
+          <Text style={[s.totalProb, { color }]}>
+            {indicative ? "~" : ""}
+            {pct(analysis.combined)}
+          </Text>
+        </View>
+        {indicative ? <Badge label="Estimation indicative" tone="neutral" icon="help-circle" /> : <Badge label={v.label} solid tone={v.label === "Jouable" ? "win" : v.label === "Risqué" ? "gold" : "loss"} />}
       </View>
+      <ProbBar value={analysis.combined} color={color} height={8} style={s.totalBar} />
+      {!indicative ? (
+        <Txt style={s.fairOdds}>
+          Cote équitable estimée : <Bold style={s.fairValue}>{(1 / analysis.combined).toFixed(2)}</Bold> (sans marge de bookmaker : les cotes réelles seront plus basses)
+        </Txt>
+      ) : null}
       {indicative ? (
         <Note>{analysis.pending > 1 ? `${analysis.pending} sélections n'ont` : "1 sélection n'a"} pas d'analyse chiffrée : le pourcentage est indicatif. Appuyez sur « Analyser ».</Note>
       ) : null}
@@ -136,7 +143,7 @@ function Total({ c, analysis }: { c: Controller; analysis: CouponAnalysis }) {
         </Txt>
       ) : null}
       <View style={s.totalActions}>
-        <LinkBtn label={showDetails ? "Masquer" : "Détails"} onPress={c.toggleDetails} />
+        <LinkBtn label={showDetails ? "Masquer" : "Détails"} icon={showDetails ? "eye-off" : "eye"} onPress={c.toggleDetails} />
         <View style={s.analyzeWrap}>
           <Btn label={aiLoading ? "Analyse…" : "Analyser"} icon="trending-up" onPress={() => void c.analyzeWithAI()} disabled={aiLoading} compact />
         </View>
@@ -152,7 +159,7 @@ function Total({ c, analysis }: { c: Controller; analysis: CouponAnalysis }) {
         </View>
       ) : null}
       {aiNotice ? <Note>{aiNotice}</Note> : null}
-      {aiError ? <Txt style={s.error}>{aiError}</Txt> : null}
+      {aiError ? <Note tone="bad">{aiError}</Note> : null}
     </View>
   );
 }
@@ -163,10 +170,11 @@ export default function CouponScreen({ c }: { c: Controller }) {
   return (
     <>
       <Card>
-        <SectionTitle>Ajouter un match</SectionTitle>
+        <SectionTitle icon="edit-3">Ajouter un match</SectionTitle>
         <TeamInput
           label="Équipe 1 (à domicile)"
           placeholder="Nom du club"
+          icon="home"
           value={form.equipe1}
           onChange={(v) => c.setForm((f) => ({ ...f, equipe1: v }))}
           index={catalog.index}
@@ -176,6 +184,7 @@ export default function CouponScreen({ c }: { c: Controller }) {
         <TeamInput
           label="Équipe 2 (à l'extérieur)"
           placeholder="Nom du club"
+          icon="map-pin"
           value={form.equipe2}
           onChange={(v) => c.setForm((f) => ({ ...f, equipe2: v }))}
           index={catalog.index}
@@ -183,15 +192,15 @@ export default function CouponScreen({ c }: { c: Controller }) {
           onFocus={catalog.refresh}
         />
         <BetTypePicker value={form.typePari} onChange={(v) => c.setForm((f) => ({ ...f, typePari: v }))} />
-        <Btn label="Ajouter" icon="plus" kind="dashed" onPress={c.addToDraft} />
-        <Text style={s.hint}>
-          L'équipe 1 reçoit (domicile), l'équipe 2 se déplace : « Victoire domicile » désigne l'équipe 1. Les deux clubs peuvent venir de championnats différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
-        </Text>
+        <Btn label="Ajouter" icon="plus" kind={draft.length > 0 ? "secondary" : "primary"} onPress={c.addToDraft} />
+        <Note tone="info">
+          L'équipe 1 reçoit (domicile), l'équipe 2 se déplace. Les deux clubs peuvent venir de championnats différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
+        </Note>
       </Card>
 
       {draft.length > 0 ? (
         <Card>
-          <SectionTitle>{`Coupon (${draft.length} ${draft.length > 1 ? "matchs" : "match"})`}</SectionTitle>
+          <SectionTitle icon="clipboard">{`Coupon (${draft.length} ${draft.length > 1 ? "matchs" : "match"})`}</SectionTitle>
           {draft.map((sel) => (
             <SelectionRow
               key={sel.id}
@@ -206,40 +215,40 @@ export default function CouponScreen({ c }: { c: Controller }) {
         </Card>
       ) : null}
 
-      {draft.length > 0 ? <Btn label="Enregistrer" kind="win" onPress={() => void c.saveCoupon()} /> : null}
+      {draft.length > 0 ? <Btn label="Enregistrer" icon="save" kind="success" onPress={() => void c.saveCoupon()} /> : null}
     </>
   );
 }
 
 const s = StyleSheet.create({
-  hint: { fontFamily: F.body, fontSize: 12, lineHeight: 17, color: T.chalkDim, marginTop: 10 },
-  sel: { borderColor: T.line, borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 8 },
-  selTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 8 },
+  sel: { backgroundColor: T.raised, borderColor: T.line, borderWidth: 1, borderLeftWidth: 4, borderRadius: RD.md, paddingVertical: SP.md, paddingHorizontal: SP.md, marginBottom: SP.sm },
+  selTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: SP.sm },
   selInfo: { flex: 1, minWidth: 0 },
-  selNames: { fontFamily: F.bodySemi, fontSize: 14 },
-  selBet: { color: T.chalkDim, fontSize: 13, marginTop: 1 },
-  selSmall: { color: T.chalkDim, fontSize: 11, lineHeight: 15, marginTop: 2 },
-  selRight: { flexDirection: "row", alignItems: "center", gap: 2 },
-  selProb: { fontFamily: F.mono, fontSize: 16 },
-  reason: { marginTop: 8, padding: 8, backgroundColor: T.bgDeep, borderRadius: 6, fontSize: 12, lineHeight: 17, fontStyle: "italic", color: T.chalkDim },
-  vigilance: { marginTop: 8, padding: 8, backgroundColor: T.bgDeep, borderRadius: 6, fontSize: 12, lineHeight: 17, color: T.gold },
-  confidence: { marginTop: 8, fontSize: 11, color: T.chalkDim, textTransform: "uppercase" },
-  h2h: { marginTop: 8, padding: 8, backgroundColor: alpha(T.gold, 0.07), borderRadius: 6 },
+  selNames: { fontFamily: F.bodySemi, fontSize: 15, lineHeight: 21 },
+  selBet: { color: T.gold, fontFamily: F.bodyMedium, fontSize: 13.5, lineHeight: 19, marginTop: 1 },
+  selSmall: { color: T.chalkDim, fontSize: 11.5, lineHeight: 16, marginTop: 3 },
+  selRight: { flexDirection: "row", alignItems: "center", gap: 2, marginTop: -4, marginRight: -6 },
+  selProb: { fontFamily: F.title, fontSize: 22, lineHeight: 28, fontVariant: ["tabular-nums"] },
+  selBar: { marginTop: SP.sm },
+  reason: { marginTop: SP.sm, padding: SP.sm, backgroundColor: T.bgDeep, borderRadius: 8, fontSize: 12.5, lineHeight: 18, fontStyle: "italic", color: T.chalkDim },
+  confidence: { marginTop: SP.sm, fontSize: 11, letterSpacing: 0.5, color: T.chalkDim, textTransform: "uppercase" },
+  h2h: { marginTop: SP.sm, padding: SP.sm, backgroundColor: alpha(T.gold, 0.07), borderRadius: 8 },
   h2hBilan: { marginTop: 4, fontFamily: F.bodySemi, fontSize: 12 },
-  detail: { marginTop: 8, padding: 8, backgroundColor: T.bgDeep, borderRadius: 6 },
+  detail: { marginTop: SP.sm, padding: SP.sm, backgroundColor: T.bgDeep, borderRadius: 8 },
   detailTitle: { fontFamily: F.bodySemi, fontSize: 12, color: T.gold, marginBottom: 3 },
   detailText: { fontSize: 12, lineHeight: 17, color: T.chalkDim },
-  detailSmall: { fontSize: 11, lineHeight: 16, color: T.chalkDim },
-  total: { backgroundColor: T.bgDeep, borderColor: T.line, borderWidth: 1, borderRadius: 10, padding: 12, marginTop: 6 },
-  totalCenter: { alignItems: "center", gap: 6 },
-  totalProb: { fontFamily: F.mono, fontSize: 38 },
-  badge: { paddingHorizontal: 14, paddingVertical: 4, borderRadius: 20 },
-  badgeText: { fontFamily: F.bodySemi, fontSize: 13 },
-  fairOdds: { fontSize: 12, lineHeight: 17, color: T.chalkDim, textAlign: "center" },
-  fragile: { fontSize: 12, lineHeight: 17, color: T.chalkDim, marginTop: 10, textAlign: "center" },
-  totalActions: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12 },
-  analyzeWrap: { minWidth: 140 },
-  progress: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 10 },
+  detailSmall: { fontSize: 11.5, lineHeight: 16, color: T.chalkDim },
+  total: { backgroundColor: T.bgDeep, borderColor: T.lineStrong, borderWidth: 1, borderRadius: RD.md, padding: SP.lg, marginTop: SP.sm },
+  totalTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: SP.sm },
+  totalMain: { flexShrink: 1 },
+  totalLabel: { fontFamily: F.bodySemi, fontSize: 10.5, letterSpacing: 0.8, textTransform: "uppercase", color: T.chalkDim },
+  totalProb: { fontFamily: F.title, fontSize: 46, lineHeight: 54, fontVariant: ["tabular-nums"] },
+  totalBar: { marginTop: SP.xs },
+  fairOdds: { fontSize: 12.5, lineHeight: 18, color: T.chalkDim, marginTop: SP.md },
+  fairValue: { fontFamily: F.mono, fontSize: 14, color: T.gold },
+  fragile: { fontSize: 12.5, lineHeight: 18, color: T.chalkDim, marginTop: SP.md },
+  totalActions: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: SP.lg },
+  analyzeWrap: { minWidth: 150 },
+  progress: { flexDirection: "row", alignItems: "flex-start", gap: SP.sm, marginTop: SP.md },
   progressText: { flex: 1, color: T.chalkDim, fontSize: 12, lineHeight: 17 },
-  error: { color: T.loss, fontSize: 12, lineHeight: 17, marginTop: 8 },
 });

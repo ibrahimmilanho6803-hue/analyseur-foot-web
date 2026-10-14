@@ -178,8 +178,6 @@ export function useAnalyseur() {
       setTopMeta({
         coteTotale: data.coteTotale,
         probabiliteCombinee: data.probabiliteCombinee,
-        objectifCoteAtteint: data.objectifCoteAtteint,
-        objectifCote: data.objectifCote,
         avertissement: data.avertissement,
         avertissementDonnees: data.avertissementDonnees,
         message: data.message,

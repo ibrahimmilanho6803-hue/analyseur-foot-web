@@ -1,4 +1,4 @@
-import { asCross, awaitsReview, crossLeagueNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, toEstimate } from "../src/estimates";
+import { asCross, asRefund, awaitsReview, crossLeagueNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, refundNote, toEstimate } from "../src/estimates";
 import type { Estimate } from "../src/types";
 import { CROSS_MESSAGE, CROSS_WEAK_MESSAGE, cross, cupLeg, okLeg, quick, topEntry } from "../test-support/fixtures";
 
@@ -42,6 +42,17 @@ describe("estimation d'une sélection", () => {
     const r = estimateProb(hist(5, 0, "Total buts 1.5 plus"), sel, {});
     expect(r.source).toBe("historique");
     expect(r.n).toBe(5);
+  });
+
+  test("un ancien nom de pari dans le coupon est estimé comme son nom actuel", () => {
+    expect(estimateProb([], { id: "z", typePari: "Victoire domicile" }, {}).p).toBe(0.44);
+    expect(estimateProb([], { id: "z", typePari: "Total buts 1.5 plus" }, {}).p).toBe(0.75);
+  });
+
+  test("les nouveaux types ont leur propre moyenne de repli", () => {
+    expect(estimateProb([], { id: "z", typePari: "Équipe 2 moins de 2.5 buts" }, {}).p).toBe(0.89);
+    expect(estimateProb([], { id: "z", typePari: "Victoire ou nul équipe 1 et plus de 1.5 buts" }, {}).p).toBe(0.54);
+    expect(estimateProb([], { id: "z", typePari: "Plus de 2 buts" }, {}).source).toBe("general");
   });
 
   test("un type de pari inconnu retombe sur 40 %", () => {
@@ -158,5 +169,28 @@ describe("clubs de championnats différents", () => {
 
   test("une analyse impossible n'emporte aucune comparaison", () => {
     expect(toEstimate({ etat: "equipe_inconnue", probabilite: null, message: "Équipe introuvable.", comparaisonEntreChampionnats: cross() }).crossLeague).toBeUndefined();
+  });
+});
+
+describe("remboursement des paris à ligne entière", () => {
+  const remboursement = { probabilite: 17.1, quand: "le match se termine avec exactement 2 buts au total" };
+
+  test("le serveur annonce la probabilité et le cas du remboursement : l'analyse les garde", () => {
+    expect(toEstimate(okLeg({ typePari: "Plus de 2 buts", remboursement })).refund).toEqual(remboursement);
+    expect(fromTopMatch(topEntry(0, { remboursement })).refund).toEqual(remboursement);
+  });
+
+  test("sans remboursement annoncé (ou avec une valeur illisible), rien n'est inventé", () => {
+    expect(toEstimate(okLeg()).refund).toBeUndefined();
+    expect(fromTopMatch(topEntry(0)).refund).toBeUndefined();
+    for (const bad of [null, undefined, 12, "texte", [], {}, { probabilite: "17", quand: "x" }, { probabilite: 17 }, { probabilite: 17, quand: "  " }, { probabilite: NaN, quand: "x" }]) {
+      expect(asRefund(bad)).toBeUndefined();
+    }
+    expect(asRefund({ probabilite: 17.1, quand: " le total est de 2 buts " })).toEqual({ probabilite: 17.1, quand: "le total est de 2 buts" });
+  });
+
+  test("la phrase de remboursement : avec ou sans probabilité", () => {
+    expect(refundNote(remboursement)).toBe("Remboursé si le match se termine avec exactement 2 buts au total (17.1 % de chances).");
+    expect(refundNote({ quand: "l'équipe 1 marque exactement 1 but" })).toBe("Remboursé si l'équipe 1 marque exactement 1 but.");
   });
 });

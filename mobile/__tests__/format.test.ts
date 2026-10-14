@@ -1,4 +1,4 @@
-import { BET_GROUPS, BASELINE_RATES, TYPES_PARI, canonicalLabel } from "../src/betTypes";
+import { BET_GROUPS, BASELINE_RATES, LEGACY_LABELS, REFUND_WHEN, TYPES_PARI, canonicalLabel } from "../src/betTypes";
 import { confidenceLabel, formatDate, formatDay, matchKey, nameDiffers, normName } from "../src/format";
 
 describe("dates en français", () => {
@@ -67,7 +67,43 @@ describe("types de paris", () => {
 
   test("les anciens libellés sont convertis", () => {
     expect(canonicalLabel("Total buts 1.5 plus")).toBe("Plus de 1.5 buts");
-    expect(canonicalLabel("Victoire exterieur")).toBe("Victoire extérieur");
+    expect(canonicalLabel("Victoire exterieur")).toBe("Victoire équipe 2");
+    expect(canonicalLabel("Victoire domicile")).toBe("Victoire équipe 1");
     expect(canonicalLabel("Match nul")).toBe("Match nul");
+    expect(canonicalLabel("Autre")).toBe("Autre");
+  });
+
+  test("chaque ancien libellé devient un pari qui existe, et aucun libellé actuel n'est un ancien nom d'un autre pari", () => {
+    for (const [ancien, actuel] of Object.entries(LEGACY_LABELS)) {
+      expect(TYPES_PARI).toContain(actuel);
+      expect(TYPES_PARI).not.toContain(ancien);
+    }
+  });
+
+  test("94 paris de plus qu'avant : 103 paris proposés, répartis en 15 familles", () => {
+    const proposes = BET_GROUPS.flatMap((g) => g.types);
+    expect(proposes).toHaveLength(103);
+    expect(BET_GROUPS).toHaveLength(15);
+    for (const g of BET_GROUPS) expect(g.types.length).toBeGreaterThan(0);
+  });
+
+  test("les lignes entières (remboursables) sont des paris proposés, avec le texte du remboursement", () => {
+    const proposes = BET_GROUPS.flatMap((g) => g.types);
+    expect(Object.keys(REFUND_WHEN)).toHaveLength(14);
+    for (const [type, quand] of Object.entries(REFUND_WHEN)) {
+      expect(proposes).toContain(type);
+      expect(type).toMatch(/ (1 but|2 buts|3 buts)$/); // ligne entière, jamais une demi-ligne
+      expect(quand).toMatch(/exactement [123] buts?/);
+    }
+    for (const type of proposes.filter((t) => /(plus|moins) de \d (but|buts)$/.test(t))) expect(REFUND_WHEN[type]).toBeDefined();
+  });
+
+  test("les probabilités moyennes sont des probabilités", () => {
+    for (const [type, rate] of Object.entries(BASELINE_RATES)) {
+      expect(rate).toBeGreaterThan(0);
+      expect(rate).toBeLessThan(1);
+      expect(TYPES_PARI).toContain(type);
+    }
+    expect(Object.keys(BASELINE_RATES).sort()).toEqual([...TYPES_PARI].sort());
   });
 });
