@@ -14,7 +14,7 @@ describe("onglet Auto", () => {
       "POST /api/auto-coupon": () => ({
         body: {
           resultats: [
-            { index: 0, ...okLeg({ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Victoire ou nul domicile", probabilite: 79.2 }) },
+            { index: 0, ...okLeg({ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Victoire ou nul équipe 1", probabilite: 79.2 }) },
             { index: 1, ...okLeg({ equipe1: "Inter", equipe2: "Torino", typePari: "Plus de 0.5 buts", probabilite: 91.0 }) },
           ],
           analyses: 2,
@@ -30,7 +30,7 @@ describe("onglet Auto", () => {
     await typeAutoMatch("Inter", "Torino");
     await fireEvent.press(button("Générer mon coupon"));
     await screen.findByText("Coupon (2 matchs)");
-    expect(screen.getByText("Victoire ou nul domicile")).toBeOnTheScreen();
+    expect(screen.getByText("Victoire ou nul équipe 1")).toBeOnTheScreen();
     expect(screen.getByText("79 %")).toBeOnTheScreen();
     expect(calls).toHaveLength(1);
     expect(calls[0].path).toBe("/api/auto-coupon");
@@ -52,7 +52,7 @@ describe("onglet Auto", () => {
       "POST /api/auto-coupon": () => ({
         body: {
           resultats: [
-            { index: 0, ...okLeg({ typePari: "Victoire ou nul domicile", probabilite: 79.2 }) },
+            { index: 0, ...okLeg({ typePari: "Victoire ou nul équipe 1", probabilite: 79.2 }) },
             { index: 1, etat: "equipe_inconnue", probabilite: null, message: "Équipe introuvable : vérifiez l'orthographe.", suggestions: { equipe1: [], equipe2: [] } },
           ],
           analyses: 1,
@@ -124,7 +124,7 @@ describe("onglet Auto : n'importe quel match", () => {
   test("un match de Ligue des champions est analysé, ajouté au coupon avec son avertissement", async () => {
     const calls = installFetch({
       "POST /api/auto-coupon": () => ({
-        body: { resultats: [{ index: 0, ...cupLeg({ typePari: "Victoire ou nul domicile", probabilite: 66.4 }) }], analyses: 1 },
+        body: { resultats: [{ index: 0, ...cupLeg({ typePari: "Victoire ou nul équipe 1", probabilite: 66.4 }) }], analyses: 1 },
       }),
     });
     await openApp();

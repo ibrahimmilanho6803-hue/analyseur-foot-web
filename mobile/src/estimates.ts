@@ -1,12 +1,26 @@
 // Lecture des réponses du serveur et estimation de la probabilité d'une sélection (même logique que le site).
 import { BASELINE_RATES, canonicalLabel } from "./betTypes";
-import type { ApiLeg, CrossLeague, Estimate, ProbEstimate, Pronostic, Selection, TopMatch } from "./types";
+import type { ApiLeg, CrossLeague, Estimate, ProbEstimate, Pronostic, Refund, Selection, TopMatch } from "./types";
 
 export const clampP = (p: number): number => Math.min(0.99, Math.max(0.01, p));
 
 // Comparaison entre championnats renvoyée par le serveur (clubs de championnats différents) ; absente pour deux clubs du même championnat.
 export function asCross(raw: unknown): CrossLeague | undefined {
   return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as CrossLeague) : undefined;
+}
+
+// Remboursement annoncé par le serveur pour un pari à ligne entière ; absent (ou illisible) pour les autres paris.
+export function asRefund(raw: unknown): Refund | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const { probabilite, quand } = raw as Partial<Refund>;
+  return typeof probabilite === "number" && Number.isFinite(probabilite) && typeof quand === "string" && quand.trim() ? { probabilite, quand: quand.trim() } : undefined;
+}
+
+// Phrase qui explique le remboursement d'un pari : « Remboursé si le match se termine avec exactement 2 buts au total (17.1 % de chances). »
+// Sans probabilité (pari pas encore analysé), seule la règle est donnée.
+export function refundNote(refund: { quand: string; probabilite?: number }): string {
+  const chance = typeof refund.probabilite === "number" ? ` (${refund.probabilite} % de chances)` : "";
+  return `Remboursé si ${refund.quand}${chance}.`;
 }
 
 // Avertissement à montrer à côté d'un pronostic entre clubs de championnats différents : le texte du serveur (il dit pourquoi
@@ -37,9 +51,10 @@ export function toEstimate(r: ApiLeg | null | undefined): Estimate {
       homeAway1: r.homeAway1,
       homeAway2: r.homeAway2,
       crossLeague: asCross(r.comparaisonEntreChampionnats),
+      refund: asRefund(r.remboursement),
     };
   }
-  const sug =r.suggestions ? [...(r.suggestions.equipe1 || []), ...(r.suggestions.equipe2 || [])].slice(0, 4) : [];
+  const sug = r.suggestions ? [...(r.suggestions.equipe1 || []), ...(r.suggestions.equipe2 || [])].slice(0, 4) : [];
   return { p: null, message: (r.message || "Analyse impossible pour cette sélection.") + (sug.length ? ` Suggestions : ${sug.join(", ")}.` : "") };
 }
 
@@ -58,8 +73,9 @@ export function estimateProb(
 ): ProbEstimate {
   const ai = aiEstimates[sel.id];
   if (ai && typeof ai.p === "number") return { p: ai.p, source: "analyse", stats: ai.statsEquipe1 || ai.statsEquipe2 };
-  const base = BASELINE_RATES[sel.typePari] ?? 0.4;
-  const hist = historicalRate(pronostics, sel.typePari);
+  const type = canonicalLabel(sel.typePari);
+  const base = BASELINE_RATES[type] ?? 0.4;
+  const hist = historicalRate(pronostics, type);
   if (hist) return { p: (hist.rate * hist.n + base * 8) / (hist.n + 8), source: "historique", n: hist.n };
   return { p: base, source: "general" };
 }
@@ -110,5 +126,6 @@ export function fromTopMatch(m: TopMatch | null | undefined): Estimate {
     homeAway1: m.homeAway1,
     homeAway2: m.homeAway2,
     crossLeague: asCross(m.comparaisonEntreChampionnats),
+    refund: asRefund(m.remboursement),
   };
 }

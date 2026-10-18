@@ -42,6 +42,12 @@ export interface CrossLeague {
   message?: string;
 }
 
+/** Pari à ligne entière (« plus de 2 buts ») : la mise est rendue quand le résultat tombe pile sur la ligne. `probabilite` est en %, `quand` le cas du remboursement. */
+export interface Refund {
+  probabilite: number;
+  quand: string;
+}
+
 /** Une sélection analysée, telle que la renvoient POST /api/analyze (legs) et POST /api/auto-coupon (resultats). */
 export interface ApiLeg {
   index?: number;
@@ -65,6 +71,8 @@ export interface ApiLeg {
   suggestions?: Suggestions;
   ia?: IaInfo;
   comparaisonEntreChampionnats?: CrossLeague | null;
+  /** Présent seulement pour un pari à ligne entière ; `probabilite` (du pari) est alors celle de gagner quand il n'est pas remboursé. */
+  remboursement?: Refund | null;
   [autre: string]: unknown;
 }
 
@@ -96,14 +104,13 @@ export interface TopMatch {
   h2h?: HeadToHead | null;
   ia?: IaInfo;
   comparaisonEntreChampionnats?: CrossLeague | null;
+  remboursement?: Refund | null;
 }
 
 export interface TopMatchesResponse {
   topMatches?: TopMatch[];
   coteTotale?: string | number;
   probabiliteCombinee?: number;
-  objectifCoteAtteint?: boolean;
-  objectifCote?: number;
   avertissement?: string;
   avertissementDonnees?: string;
   message?: string;
@@ -118,8 +125,6 @@ export interface TopMatchesResponse {
 export interface TopMeta {
   coteTotale?: string | number;
   probabiliteCombinee?: number;
-  objectifCoteAtteint?: boolean;
-  objectifCote?: number;
   avertissement?: string;
   avertissementDonnees?: string;
   message?: string;
@@ -150,6 +155,8 @@ export interface Estimate {
   homeAway2?: HomeAway | null;
   /** Renseigné quand les deux clubs viennent de championnats différents. */
   crossLeague?: CrossLeague;
+  /** Renseigné pour un pari à ligne entière (remboursé quand le résultat tombe pile sur la ligne). */
+  refund?: Refund;
 }
 
 export type ProbSource = "analyse" | "historique" | "general";

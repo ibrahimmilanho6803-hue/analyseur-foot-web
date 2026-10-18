@@ -20,9 +20,13 @@ export async function openTab(name: string) {
   await fireEvent.press(tab(name));
 }
 
-/** Choisit un type de pari dans la feuille du sélecteur. */
+/** Ouvre la feuille du sélecteur de pari. */
+export const openBetSheet = () => fireEvent.press(screen.getByRole("button", { name: /^Type de pari/ }));
+
+/** Choisit un type de pari dans la feuille du sélecteur : par la recherche, qui déplie toutes les familles (une centaine de paris). */
 export async function chooseBet(bet: string) {
-  await fireEvent.press(screen.getByRole("button", { name: /^Type de pari/ }));
+  await openBetSheet();
+  await fireEvent.changeText(await screen.findByLabelText("Rechercher un pari"), bet);
   await fireEvent.press(await screen.findByRole("radio", { name: bet }));
 }
 

@@ -45,7 +45,7 @@ export const topEntry = (i: number, over: Partial<TopMatch> = {}): TopMatch => (
   awayTeam: ["Chelsea", "Getafe", "Torino"][i],
   competition: ["Premier League", "Primera División", "Serie A"][i],
   date: inFuture(10 + i),
-  meilleurPari: ["Plus de 1.5 buts", "Victoire ou nul domicile", "Plus de 0.5 buts"][i],
+  meilleurPari: ["Plus de 1.5 buts", "Victoire ou nul équipe 1", "Plus de 0.5 buts"][i],
   probabilite: [78.4, 76.1, 83.9][i],
   coteEstimee: [1.28, 1.31, 1.19][i],
   niveauConfiance: ["eleve", "moyen", "eleve"][i],
@@ -62,14 +62,12 @@ export const topEntry = (i: number, over: Partial<TopMatch> = {}): TopMatch => (
 
 export const topPayload = (over: Partial<TopMatchesResponse> = {}): TopMatchesResponse => ({
   fenetreHeures: 72,
-  objectifCote: 2.5,
   avertissement: "Cotes estimées (1 ÷ probabilité), sans marge de bookmaker : les cotes réelles proposées par un opérateur seront plus basses.",
   complet: true,
   donnees: { championnatsPrets: ["PL", "PD", "SA", "BL1", "FL1", "PPL", "DED", "BSA"] },
   topMatches: [topEntry(0), topEntry(1), topEntry(2)],
   coteTotale: "2.66",
   probabiliteCombinee: 37.6,
-  objectifCoteAtteint: true,
   ia: { statut: "ok", modele: "claude-sonnet-5-5" },
   ...over,
 });

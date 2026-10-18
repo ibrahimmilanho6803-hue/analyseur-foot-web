@@ -56,11 +56,43 @@ describe("onglet Top Matchs", () => {
     expect(screen.getByText(/Certains championnats sont encore en cours de chargement/)).toBeOnTheScreen();
   });
 
-  test("objectif de cote non atteint : le dit sans l'enjoliver", async () => {
-    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ objectifCoteAtteint: false, topMatches: [topEntry(0)], coteTotale: "1.28", probabiliteCombinee: 78.4 }) }) });
+  test("plus de limite de cote : un pari très probable à cote très basse est présenté tel quel", async () => {
+    installFetch({
+      "GET /api/top-matches": () => ({
+        body: topPayload({ topMatches: [topEntry(0, { meilleurPari: "Plus de 0.5 buts", probabilite: 97.2, coteEstimee: 1.03 })], coteTotale: "1.03", probabiliteCombinee: 97.2 }),
+      }),
+    });
     await openApp();
     await openTab("Top Matchs");
-    await screen.findByText(/Objectif de cote \(2.5\) non atteint/);
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getAllByText("97.2 %")).toHaveLength(2); // le match et la probabilité combinée
+    expect(screen.getAllByText("1.03")).toHaveLength(2); // sa cote estimée et la cote combinée
+    expect(screen.getByText("Plus de 0.5 buts")).toBeOnTheScreen();
+  });
+
+  test("un ancien serveur qui annonce encore un objectif de cote : l'application n'en parle plus", async () => {
+    const body = { ...topPayload({ topMatches: [topEntry(0)], coteTotale: "1.28", probabiliteCombinee: 78.4 }), objectifCote: 2.5, objectifCoteAtteint: false };
+    installFetch({ "GET /api/top-matches": () => ({ body }) });
+    await openApp();
+    await openTab("Top Matchs");
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getByText("Cote combinée estimée")).toBeOnTheScreen();
+    expect(screen.queryByText(/objectif/i)).not.toBeOnTheScreen();
+  });
+
+  test("un pari à ligne entière : le remboursement est annoncé, et il suit le pari dans le coupon", async () => {
+    const refund = { probabilite: 17.1, quand: "le match se termine avec exactement 2 buts au total" };
+    installFetch({
+      "GET /api/top-matches": () => ({ body: topPayload({ topMatches: [topEntry(0, { meilleurPari: "Plus de 2 buts", remboursement: refund }), topEntry(1)] }) }),
+    });
+    await openApp();
+    await openTab("Top Matchs");
+    await screen.findByText("Arsenal vs Chelsea");
+    const note = "Remboursé si le match se termine avec exactement 2 buts au total (17.1 % de chances).";
+    expect(screen.getAllByText(note)).toHaveLength(1); // seul ce match est concerné
+    await fireEvent.press(screen.getAllByRole("button", { name: "Ajouter ce pronostic" })[0]);
+    await openTab("Mon coupon");
+    expect(screen.getByText(note)).toBeOnTheScreen();
   });
 
   test("erreur du serveur : message clair et possibilité de réessayer", async () => {

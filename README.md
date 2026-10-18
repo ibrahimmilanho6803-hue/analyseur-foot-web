@@ -4,12 +4,13 @@ Application React qui affiche les pronostics calculés par le serveur
 [analyseur-foot-backend](https://github.com/ibrahimmilanho6803-hue/analyseur-foot-backend). Elle existe en deux versions : ce site
 (dossier `src/`) et une **vraie application Android en React Native** (dossier [`mobile/`](#application-mobile-react-native)).
 
-- **Top Matchs** : les 3 meilleurs matchs à venir, avec la cote combinée *estimée*.
-- **Mon coupon** : saisie de sélections, analyse par le serveur (modèle statistique relu par l'IA), probabilité de chaque sélection et du coupon.
-- **Auto** : le serveur choisit le pari le plus probable de chaque match saisi.
+- **Top Matchs** : les 3 meilleurs matchs à venir (le pari le plus fiable de chacun, quelle que soit sa cote), avec la cote combinée *estimée*.
+- **Mon coupon** : saisie de sélections parmi **103 types de paris**, analyse par le serveur (modèle statistique relu par l'IA), probabilité de chaque sélection et du coupon.
+- **Auto** : le serveur choisit le pari le plus probable de chaque match saisi, **sans limite de cote** ([voir plus bas](#103-types-de-paris-sans-limite-de-cote)).
 - **N'importe quel match** : Mon coupon et Auto acceptent deux clubs du même championnat, de championnats différents (Ligue des
   champions, Ligue Europa, Ligue Conférence…) ou un club que seules les coupes d'Europe font connaître ([voir plus bas](#matchs-entre-championnats-ligue-des-champions)).
 - **Historique** : coupons enregistrés sur l'appareil (stockage local du navigateur).
+- **Design** : thème sombre vert et or, lisible sur téléphone comme sur grand écran ([voir plus bas](#design)).
 
 Le site ne contient aucune clé secrète et n'appelle jamais l'IA directement : tout passe par le serveur. Si une analyse est
 impossible (équipe inconnue, serveur indisponible…), le site affiche « ? » et la raison, il n'invente jamais de probabilité.
@@ -46,6 +47,41 @@ d'Europe : le résultat est **moins précis** qu'entre deux clubs d'un même cha
 
 Avec un serveur plus ancien, ces informations n'existent pas et rien ne s'affiche en plus : le comportement est celui d'avant.
 
+## 103 types de paris, sans limite de cote
+
+**103 types de paris**, en 15 familles : résultat du match ; total de buts du match (de 0.5 à 3.5) ; les deux équipes marquent ; buts de
+l'équipe 1 ; buts de l'équipe 2 ; résultat et total de buts du match (quatre familles : victoire équipe 1, victoire ou nul équipe 1, victoire
+équipe 2, victoire ou nul équipe 2) ; au moins une équipe marque ; résultat et buts d'une équipe (quatre familles) ; score exact.
+L'équipe 1 reçoit (domicile), l'équipe 2 se déplace ; « victoire ou nul » est la double chance (1X, 2X).
+
+- **Les noms sont ceux du serveur** : `src/betTypes.js` contient la liste, les familles, les probabilités de repli et les règles de
+  remboursement, identiques à celles de `src/markets.js` côté serveur. L'application mobile a la même liste (`mobile/src/betTypes.ts`) :
+  le test `mobile/__tests__/coherenceSite.test.ts` compare les deux et échoue dès que l'une change sans l'autre, avant toute publication
+  de l'APK. **Le serveur doit être mis à jour avant le site et l'application** : un serveur plus ancien ne connaît pas les nouveaux noms.
+- **Choisir un pari** : le champ « Type de pari » ouvre une fenêtre qui présente les familles l'une après l'autre. Le champ « Rechercher
+  un pari » filtre tous les paris à la fois : sans accents ni majuscules, « 2,5 » et « 2.5 » sont la même ligne, les mots peuvent venir
+  dans n'importe quel ordre (« nul équipe 1 », « plus 2.5 »), et « 2 » désigne l'équipe 2 ou la ligne de 2 buts, jamais « 2.5 ». La
+  touche Échap ferme la fenêtre, Tab reste dans la fenêtre, et le focus revient au champ à la fermeture.
+- **Plus aucune limite de cote** : « Top Matchs » et « Auto » ne visent plus une cote totale de 2.5 ni une fourchette de probabilité
+  (55 à 88 %). Le serveur retient, pour chaque match, le pari **le plus probable**, quelle que soit sa cote, et « Top Matchs » garde
+  les 3 matchs dont ce pari est le plus sûr. **Conséquence directe** : ces paris sont très probables (souvent plus de 90 %), donc leur
+  **cote équitable est basse** (1.03 à 1.10 le plus souvent : « plus de 0.5 buts », ou le « moins de » d'une équipe très inférieure) ;
+  un coupon de plusieurs matchs rapporte peu. Le site affiche la cote équitable estimée (1 ÷ probabilité, sans marge de bookmaker : celle
+  d'un opérateur sera plus basse encore). Aucune probabilité n'est affichée au-delà de 99 %. Le réglage facultatif `PICK_MAX_PROBABILITY`
+  du serveur (voir son README) permet d'écarter les paris quasi certains ; le site n'a rien à régler.
+- **Paris à ligne entière et remboursement** : pour 14 types (« plus de 2 buts », « équipe 1 moins de 1 but »…), la mise est **rendue**
+  quand le résultat tombe pile sur la ligne. La probabilité affichée est celle de **gagner quand le pari n'est pas remboursé** ; la
+  probabilité du remboursement vient à part du serveur (`remboursement`) et s'affiche sous le pari : « Remboursé si le match se termine
+  avec exactement 2 buts au total (17.1 % de chances). » (le pourcentage change à chaque match). Avant l'analyse, seule la règle est
+  donnée (`REFUND_WHEN`). Dans l'historique, un pari remboursable encore en attente porte la mention « Remboursé si … : dans ce cas,
+  supprimez ce pari » : un remboursement n'est ni gagné ni perdu, et ne doit pas fausser le taux de réussite.
+- **Anciens noms** : « Victoire domicile », « Equipe extérieur 1.5 buts plus »… (coupons enregistrés avant cette version) restent
+  lisibles : le site les affiche sous leur nom actuel (`canonicalLabel`), et le serveur les accepte encore à l'envoi. Le type
+  « Autre » n'est pas proposé dans la fenêtre de choix (il n'existe que pour l'historique).
+- **Estimation avant l'analyse** : tant qu'un pari n'est pas analysé, son pourcentage est une moyenne : celle de votre historique
+  (à partir de 3 paris clôturés du même type, ramenée vers la moyenne générale tant qu'ils sont peu nombreux), sinon la moyenne générale
+  (`BASELINE_RATES`, calculée pour un match moyen). Il est affiché avec « ~ » et n'est jamais présenté comme une analyse.
+
 ## Analyse en deux temps
 
 « Analyser » envoie d'abord la demande au serveur **sans l'IA** (`POST /api/analyze` avec `ia: false`) : le résultat du modèle
@@ -65,12 +101,47 @@ Les noms **reconnus par le serveur** sont affichés dans la liste et dans l'hist
 |---|---|---|
 | `REACT_APP_API_URL` | Adresse du serveur. | `https://analyseur-foot-api.onrender.com` |
 
-## Tests
+## Organisation du site et tests
+
+Dossier `src/` :
+
+| Fichier | Rôle |
+|---|---|
+| `AnalyseurCoupon.jsx` | La coquille : en-tête, navigation entre les quatre onglets, écran actif, avertissement. |
+| `useAnalyseur.js` | Tout l'état et toutes les actions : coupon en cours, analyse en deux temps, historique, Top Matchs, liste des clubs. |
+| `screens/` | Un fichier par onglet : `TopScreen`, `CouponScreen`, `AutoScreen`, `HistoryScreen`. |
+| `ui.jsx` | Les éléments de base du design : carte, boutons, pastilles, barre de probabilité, notes, titres. |
+| `BetPicker.jsx`, `betTypes.js`, `betSearch.js` | La fenêtre de choix du pari, la liste des 103 paris (familles, repli, remboursements, anciens noms) et la recherche. |
+| `TeamInput.jsx`, `suggest.js`, `useTeamCatalog.js` | La saisie d'un club avec suggestions et la liste des clubs du serveur. |
+| `estimates.js`, `api.js`, `format.js` | Les probabilités (jamais inventées), les appels au serveur (délais, messages d'erreur), les dates. |
+| `styles.css` | Tout le design (couleurs, polices, écrans) : voir « Design ». |
 
 ```
-npm test            # tests du site (faux serveur, aucun appel réseau)
-CI=true npm run build   # la construction doit passer sans avertissement
+npm test                # tests du site (faux serveur, aucun appel réseau, aucun appel à l'IA)
+npx eslint --max-warnings=0 --ext .js,.jsx src   # erreurs courantes et style : aucun avertissement toléré
+CI=true npm run build   # la construction doit passer sans avertissement (Vercel construit ainsi : un avertissement bloque la mise en ligne)
 ```
+
+Les tests de l'application mobile (`cd mobile && npm test`) sont ceux que GitHub Actions exécute à chaque modification.
+
+## Design
+
+Thème sombre **vert profond et or** (la pelouse de nuit et le ballon doré de l'icône), pensé pour un coupon que l'on consulte vite, sur
+un téléphone, souvent le soir.
+
+- **Couleurs** : toutes sont des variables au début de `src/styles.css` (`--bg-deep`, `--surface`, `--gold`, `--win`, `--loss`,
+  `--info`…). La probabilité d'un pari prend la couleur de sa fiabilité : vert à partir de 70 %, or à partir de 50 %, rouge en dessous.
+  L'or sert aux actions et au meilleur match. Le pourcentage et le verdict (« Jouable », « Risqué »…) sont toujours écrits : la couleur ne
+  les porte jamais seule.
+- **Polices** : Oswald (titres et grands chiffres), Inter (texte), JetBrains Mono (cotes), chargées depuis Google Fonts par
+  `public/index.html`. Hors ligne, le site reste lisible avec les polices du système.
+- **Écrans** : sur téléphone, les quatre onglets sont dans une barre fixe en bas de l'écran, à portée du pouce (au-dessus de la barre
+  de navigation des iPhone) ; à partir de 720 px de large ils passent en haut, et sur grand écran le formulaire se place à côté du
+  coupon ou de la liste des matchs à générer.
+- **Accessibilité** : tout se fait au clavier (le focus est toujours visible), la fenêtre de choix du pari et les suggestions de
+  clubs suivent les rôles ARIA attendus, et les animations sont réduites quand l'appareil le demande (`prefers-reduced-motion`).
+- **Application mobile** : mêmes couleurs, mêmes polices, même organisation (`mobile/src/theme.ts`). Le test
+  `mobile/__tests__/coherenceSite.test.ts` compare les couleurs des deux fichiers : si l'une change, l'autre doit suivre.
 
 ## Application mobile (React Native)
 
@@ -144,10 +215,11 @@ npx expo start         # lance l'application sur un téléphone avec Expo Go (QR
 | `EXPO_PUBLIC_API_URL` | Adresse du serveur. | `https://analyseur-foot-api.onrender.com` |
 
 Organisation : `src/api.ts` (appels au serveur, délais et messages d'erreur), `src/estimates.ts` (probabilités : jamais inventées),
-`src/suggest.ts` (suggestions de clubs), `src/hooks/useAnalyseur.ts` (tout l'état et les actions), `src/screens/` (un fichier par
-onglet), `src/components/` (champ de club, choix du pari, barre d'onglets), `src/theme.ts` (couleurs et polices, communes avec le
-site). Les polices (Oswald, JetBrains Mono, Inter) et les icônes sont embarquées dans l'application : elle n'a besoin d'Internet que
-pour interroger le serveur.
+`src/suggest.ts` (suggestions de clubs), `src/betTypes.ts` et `src/betSearch.ts` (les 103 types de paris, leurs familles et la
+recherche : mêmes données que le site), `src/hooks/useAnalyseur.ts` (tout l'état et les actions), `src/screens/` (un fichier par
+onglet), `src/components/` (champ de club, fenêtre de choix du pari, barre d'onglets), `src/ui.tsx` (éléments de base du design),
+`src/theme.ts` (couleurs et polices, communes avec le site). Les polices (Oswald, JetBrains Mono, Inter) et les icônes sont embarquées
+dans l'application : elle n'a besoin d'Internet que pour interroger le serveur.
 
 **Limites communes au site et à l'application** : le serveur est partagé. Les analyses de tous les utilisateurs comptent dans la
 même limite quotidienne d'appels à l'IA et dans le même quota de la source de données ; chaque adresse IP (donc chaque réseau
@@ -188,7 +260,7 @@ augmenter `versionCode`, puis republier l'APK.
 ## Identité visuelle (icônes)
 
 Nom (« Analyseur Foot Pro », « Analyseur Foot » sur l'écran d'accueil), langue, description et couleurs : `public/index.html` et
-`public/manifest.json`. L'icône (cercle central et ballon doré sur le vert de l'écran principal, couleurs de `src/theme.js`) est
+`public/manifest.json`. L'icône (cercle central et ballon doré sur le vert de l'écran principal, couleurs de `src/styles.css`) est
 dessinée par `scripts/generer-icones.py` (`pip install pillow`, puis `python3 scripts/generer-icones.py` depuis la racine) : il
 réécrit `public/favicon.ico`, `public/logo192.png`, `public/logo512.png`, ainsi que l'icône et l'écran de démarrage Android
 (`android/app/src/main/res/`). Les fichiers Android gardent les dimensions attendues par Capacitor.

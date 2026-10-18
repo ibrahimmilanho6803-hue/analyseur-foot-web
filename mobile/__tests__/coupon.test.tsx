@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react-native";
-import { addMatch, button, chooseBet, openApp, openTab, readStored, resetStorage, team1, team2 } from "../test-support/app";
+import { addMatch, button, chooseBet, openApp, openBetSheet, openTab, readStored, resetStorage, team1, team2 } from "../test-support/app";
 import type { Calls } from "../test-support/fakeServer";
 import { installFetch } from "../test-support/fakeServer";
 import { CROSS_MESSAGE, CROSS_WEAK_MESSAGE, cross, cupLeg, okLeg, parisLeg, quick, reviewed, topPayload } from "../test-support/fixtures";
@@ -21,17 +21,69 @@ describe("onglet Mon coupon", () => {
     expect(screen.getByText(/Moyenne générale de ce pari/)).toBeOnTheScreen();
   });
 
-  test("le type de pari se choisit dans une feuille, par famille, et la feuille se referme", async () => {
+  test("le type de pari se choisit dans une feuille : les familles se déplient une à une, et la feuille se referme", async () => {
     installFetch({});
     await openApp();
     expect(screen.queryByRole("radio", { name: "Match nul" })).not.toBeOnTheScreen();
-    await fireEvent.press(screen.getByRole("button", { name: /^Type de pari/ }));
-    expect(await screen.findByText("Résultat du match")).toBeOnTheScreen();
-    expect(screen.getByText("Total de buts du match")).toBeOnTheScreen();
-    expect(screen.getByRole("radio", { name: "Victoire domicile" })).toBeChecked(); // le choix actuel est coché
-    await fireEvent.press(screen.getByRole("radio", { name: "Match nul" }));
-    expect(screen.queryByRole("radio", { name: "Match nul" })).not.toBeOnTheScreen();
-    expect(screen.getByRole("button", { name: "Type de pari : Match nul" })).toBeOnTheScreen();
+    await openBetSheet();
+    // La famille du pari actuel est ouverte et son choix est coché ; les autres sont repliées.
+    expect(await screen.findByRole("radio", { name: "Victoire équipe 1" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Résultat du match" })).toBeExpanded();
+    expect(screen.getByRole("button", { name: "Total de buts du match" })).toBeCollapsed();
+    expect(screen.queryByRole("radio", { name: "Plus de 2.5 buts" })).not.toBeOnTheScreen();
+    // Ouvrir une autre famille replie la précédente.
+    await fireEvent.press(screen.getByRole("button", { name: "Total de buts du match" }));
+    expect(screen.getByRole("radio", { name: "Plus de 2.5 buts" })).toBeOnTheScreen();
+    expect(screen.getByRole("radio", { name: "Moins de 3 buts" })).toBeOnTheScreen();
+    expect(screen.queryByRole("radio", { name: "Victoire équipe 1" })).not.toBeOnTheScreen();
+    expect(screen.getByRole("button", { name: "Résultat du match" })).toBeCollapsed();
+    // Toucher la famille ouverte la referme.
+    await fireEvent.press(screen.getByRole("button", { name: "Total de buts du match" }));
+    expect(screen.queryByRole("radio", { name: "Plus de 2.5 buts" })).not.toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole("button", { name: "Total de buts du match" }));
+    await fireEvent.press(screen.getByRole("radio", { name: "Plus de 2.5 buts" }));
+    expect(screen.queryByRole("radio", { name: "Plus de 2.5 buts" })).not.toBeOnTheScreen(); // la feuille s'est refermée
+    expect(screen.getByRole("button", { name: "Type de pari : Plus de 2.5 buts" })).toBeOnTheScreen();
+  });
+
+  test("la feuille s'ouvre sur la famille du pari choisi, et les autres familles restent à portée", async () => {
+    installFetch({});
+    await openApp();
+    await chooseBet("Équipe 2 moins de 1.5 buts");
+    await openBetSheet();
+    expect(await screen.findByRole("radio", { name: "Équipe 2 moins de 1.5 buts" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Buts de l'équipe 2" })).toBeExpanded();
+    expect(screen.getByRole("radio", { name: "Équipe 2 plus de 2.5 buts" })).toBeOnTheScreen();
+    expect(screen.getByRole("button", { name: "Résultat du match" })).toBeCollapsed();
+  });
+
+  test("la recherche parcourt toutes les familles, sans accents ni majuscules, « 2,5 » comme « 2.5 »", async () => {
+    installFetch({});
+    await openApp();
+    await openBetSheet();
+    const search = await screen.findByLabelText("Rechercher un pari");
+    await fireEvent.changeText(search, "EQUIPE 2 plus de 2,5");
+    expect(screen.getByRole("radio", { name: "Équipe 2 plus de 2.5 buts" })).toBeOnTheScreen();
+    expect(screen.getByRole("radio", { name: "Victoire équipe 2 et plus de 2.5 buts" })).toBeOnTheScreen(); // famille différente
+    expect(screen.queryByRole("radio", { name: "Équipe 2 plus de 1.5 buts" })).not.toBeOnTheScreen();
+    expect(screen.queryByRole("radio", { name: "Équipe 1 plus de 2.5 buts" })).not.toBeOnTheScreen();
+    await fireEvent.changeText(search, "pari qui n'existe pas");
+    expect(screen.getByText("Aucun pari ne correspond à « pari qui n'existe pas ».")).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole("button", { name: "Effacer la recherche" })); // retour à la liste par familles
+    expect(await screen.findByRole("radio", { name: "Victoire équipe 1" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Résultat du match" })).toBeExpanded();
+  });
+
+  test("un pari à ligne entière annonce qu'il est remboursé quand le résultat tombe pile sur la ligne", async () => {
+    installFetch({});
+    await openApp();
+    expect(screen.queryByText(/remboursé si/i)).not.toBeOnTheScreen(); // « Victoire équipe 1 » n'est jamais remboursé
+    await chooseBet("Plus de 2 buts");
+    expect(screen.getByText("Ligne entière : remboursé si le match se termine avec exactement 2 buts au total.")).toBeOnTheScreen();
+    await openBetSheet();
+    await screen.findByRole("radio", { name: "Plus de 2 buts" });
+    expect(screen.getAllByText("Remboursé si le match se termine avec exactement 2 buts au total")).toHaveLength(2); // « plus de » et « moins de » 2 buts
+    expect(screen.queryByText(/Remboursé si l'équipe 1/)).not.toBeOnTheScreen(); // une autre famille, repliée
   });
 
   test("ajouter sans nom d'équipe n'ajoute rien", async () => {
