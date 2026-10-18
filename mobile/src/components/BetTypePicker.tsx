@@ -201,7 +201,7 @@ const s = StyleSheet.create({
     paddingRight: 4,
     marginBottom: SP.sm,
   },
-  searchInput: { flex: 1, color: T.chalk, fontFamily: F.body, fontSize: 15, paddingVertical: 10 },
+  searchInput: { flex: 1, minWidth: 0, color: T.chalk, fontFamily: F.body, fontSize: 15, paddingVertical: 10 },
   list: { flexGrow: 0 },
   noResult: { color: T.chalkDim, textAlign: "center", paddingVertical: SP.xl, lineHeight: 20 },
   group: { borderRadius: RD.md, marginBottom: 6, borderWidth: 1, borderColor: "transparent" },
