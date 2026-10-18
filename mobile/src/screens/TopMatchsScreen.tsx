@@ -138,7 +138,7 @@ const s = StyleSheet.create({
   teams: { fontFamily: F.bodySemi, fontSize: 18, lineHeight: 24, marginBottom: SP.md },
   pick: { flexDirection: "row", alignItems: "center", gap: SP.md, backgroundColor: alpha(T.gold, 0.09), borderColor: alpha(T.gold, 0.3), borderWidth: 1, borderRadius: RD.md, padding: SP.md },
   pickMain: { flex: 1, minWidth: 0, gap: 2 },
-  caption: { fontFamily: F.bodySemi, fontSize: 10.5, letterSpacing: 0.8, textTransform: "uppercase", color: T.chalkDim },
+  caption: { fontFamily: F.body, fontSize: 12, color: T.chalkDim },
   pickName: { fontFamily: F.bodySemi, fontSize: 16, lineHeight: 22, color: T.gold },
   odds: { alignItems: "flex-end", gap: 2 },
   oddsValue: { fontFamily: F.mono, fontSize: 20, lineHeight: 26, color: T.chalk },

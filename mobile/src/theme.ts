@@ -1,4 +1,5 @@
-// Identité visuelle de l'application : vert « pelouse de nuit » et or. Mêmes valeurs que le site (src/theme.js du site).
+// Identité visuelle de l'application : vert « pelouse de nuit » et or. Mêmes valeurs que le site (variables au début de src/styles.css,
+// à la racine du dépôt) : le test __tests__/coherenceSite.test.ts vérifie que les couleurs restent identiques.
 export const T = {
   // Fonds, du plus profond au plus clair : page, cartes, zones en relief à l'intérieur d'une carte (champs, pastilles).
   bgDeep: "#07140E",

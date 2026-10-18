@@ -251,7 +251,7 @@ const s = StyleSheet.create({
   meter: { flexDirection: "row", alignItems: "flex-end", gap: 3, height: 14 },
   meterBar: { width: 4, borderRadius: 2 },
   tile: { flex: 1, backgroundColor: T.raised, borderRadius: RD.md, borderWidth: 1, borderColor: T.line, paddingVertical: SP.md, paddingHorizontal: SP.md, gap: 4 },
-  tileLabel: { fontFamily: F.bodySemi, fontSize: 10.5, letterSpacing: 0.8, textTransform: "uppercase", color: T.chalkDim },
+  tileLabel: { fontFamily: F.bodyMedium, fontSize: 12, color: T.chalkDim },
   empty: { alignItems: "center", paddingVertical: SP.xl, gap: SP.sm },
   emptyIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: T.raised, borderWidth: 1, borderColor: T.line, alignItems: "center", justifyContent: "center", marginBottom: 4 },
   emptyTitle: { fontFamily: F.bodySemi, fontSize: 16 },
