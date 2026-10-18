@@ -1,7 +1,7 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { asCross, awaitsReview, callApi, crossLeagueNote, crossTotalNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, toEstimate } from "./AnalyseurCoupon";
+import { asCross, asRefund, awaitsReview, callApi, crossLeagueNote, crossTotalNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, refundNote, toEstimate } from "./AnalyseurCoupon";
 import { CATALOG } from "./testData";
 
 // ---------- Faux serveur : chaque appel est enregistré, aucun appel réseau réel ----------
@@ -42,7 +42,7 @@ const topEntry = (i, over = {}) => ({
   awayTeam: ["Chelsea", "Getafe", "Torino"][i],
   competition: ["Premier League", "Primera División", "Serie A"][i],
   date: inFuture(10 + i),
-  meilleurPari: ["Plus de 1.5 buts", "Victoire ou nul domicile", "Plus de 0.5 buts"][i],
+  meilleurPari: ["Plus de 1.5 buts", "Victoire ou nul équipe 1", "Plus de 0.5 buts"][i],
   probabilite: [78.4, 76.1, 83.9][i],
   probabiliteModele: [77, 75, 83][i],
   ajustementIA: 0.5,
@@ -61,14 +61,12 @@ const topEntry = (i, over = {}) => ({
 
 const topPayload = (over = {}) => ({
   fenetreHeures: 72,
-  objectifCote: 2.5,
   avertissement: "Cotes estimées (1 ÷ probabilité), sans marge de bookmaker : les cotes réelles proposées par un opérateur seront plus basses.",
   complet: true,
   donnees: { championnatsPrets: ["PL", "PD", "SA", "BL1", "FL1", "PPL", "DED", "BSA"] },
   topMatches: [topEntry(0), topEntry(1), topEntry(2)],
   coteTotale: "2.66",
   probabiliteCombinee: 37.6,
-  objectifCoteAtteint: true,
   ia: { statut: "ok", modele: "claude-sonnet-5-5" },
   ...over,
 });
@@ -97,15 +95,28 @@ const cross = (over = {}) => ({ championnat1: "Premier League", championnat2: "L
 const cupLeg = (over = {}) =>
   okLeg({ equipe1: "Arsenal", equipe2: "Real Madrid", competition: "UEFA Champions League", date: "2026-10-21T19:00:00.000Z", comparaisonEntreChampionnats: cross(), ...over });
 
+// Remboursement annoncé par le serveur pour un pari à ligne entière (« Plus de 2 buts » : rendu quand le match se termine sur 2 buts).
+const REFUND = { probabilite: 17.1, quand: "le match se termine avec exactement 2 buts au total" };
+const REFUND_NOTE = "Remboursé si le match se termine avec exactement 2 buts au total (17.1 % de chances).";
+
 async function openApp() {
   render(<App />);
   await screen.findByText("Analyseur Foot Pro");
 }
 
+// Le type de pari se choisit dans une fenêtre : on ouvre le champ, on cherche le pari par son nom, puis on le coche.
+const openPicker = () => userEvent.click(screen.getByRole("button", { name: /^Type de pari :/ }));
+const pickerDialog = () => screen.getByRole("dialog", { name: "Type de pari" });
+function pickBet(bet) {
+  openPicker();
+  userEvent.type(within(pickerDialog()).getByLabelText("Rechercher un pari"), bet);
+  userEvent.click(within(pickerDialog()).getByRole("radio", { name: bet }));
+}
+
 async function addMatch(home, away, bet) {
   userEvent.type(screen.getByLabelText("Équipe 1 (à domicile)"), home);
   userEvent.type(screen.getByLabelText("Équipe 2 (à l'extérieur)"), away);
-  if (bet) userEvent.selectOptions(screen.getByLabelText("Type de pari"), bet);
+  if (bet) pickBet(bet);
   userEvent.click(screen.getByRole("button", { name: /^Ajouter$/ }));
   await screen.findByText(`${home} vs ${away}`);
 }
@@ -379,7 +390,7 @@ describe("onglet Auto", () => {
       "POST /api/auto-coupon": () => ({
         body: {
           resultats: [
-            { index: 0, ...okLeg({ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Victoire ou nul domicile", probabilite: 79.2 }) },
+            { index: 0, ...okLeg({ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Victoire ou nul équipe 1", probabilite: 79.2 }) },
             { index: 1, ...okLeg({ equipe1: "Inter", equipe2: "Torino", typePari: "Plus de 0.5 buts", probabilite: 91.0 }) },
           ],
           analyses: 2,
@@ -395,7 +406,8 @@ describe("onglet Auto", () => {
     typeMatch("Inter", "Torino");
     userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
     await screen.findByText("Coupon (2 matchs)");
-    expect(screen.getAllByText("Victoire ou nul domicile").length).toBeGreaterThanOrEqual(2); // la liste déroulante et la carte du match
+    expect(screen.getByText("Victoire ou nul équipe 1")).toBeInTheDocument(); // le pari choisi par le serveur, sur la carte du match
+    expect(screen.getByText("Plus de 0.5 buts")).toBeInTheDocument();
     expect(screen.getByText("79 %")).toBeInTheDocument();
     expect(calls).toHaveLength(1);
     expect(calls[0].path).toBe("/api/auto-coupon");
@@ -408,7 +420,7 @@ describe("onglet Auto", () => {
       "POST /api/auto-coupon": () => ({
         body: {
           resultats: [
-            { index: 0, ...okLeg({ typePari: "Victoire ou nul domicile", probabilite: 79.2 }) },
+            { index: 0, ...okLeg({ typePari: "Victoire ou nul équipe 1", probabilite: 79.2 }) },
             { index: 1, etat: "equipe_inconnue", probabilite: null, message: "Équipe introuvable : vérifiez l'orthographe.", suggestions: { equipe1: [], equipe2: [] } },
           ],
           analyses: 1,
@@ -454,7 +466,7 @@ const savedCatalog = () => JSON.parse(localStorage.getItem("coupon-clubs"));
 const seedCatalog = (ageMs, over = {}) => localStorage.setItem("coupon-clubs", JSON.stringify({ v: 2, at: Date.now() - ageMs, data: { ...CATALOG, ...over } }));
 const team1 = () => screen.getByLabelText("Équipe 1 (à domicile)");
 const team2 = () => screen.getByLabelText("Équipe 2 (à l'extérieur)");
-const suggestionOptions = () => within(screen.getByRole("listbox", { name: "Suggestions de clubs" })).getAllByRole("option"); // sans les options du menu « Type de pari »
+const suggestionOptions = () => within(screen.getByRole("listbox", { name: "Suggestions de clubs" })).getAllByRole("option");
 
 describe("liste des clubs", () => {
   test("demandée au démarrage au serveur, puis gardée sur l'appareil", async () => {
@@ -972,7 +984,7 @@ describe("clubs de championnats différents", () => {
 
   test("Auto : un match de Ligue des champions est analysé et ajouté au coupon avec son avertissement", async () => {
     const calls = installFetch({
-      "POST /api/auto-coupon": () => ({ body: { resultats: [{ index: 0, ...cupLeg({ typePari: "Victoire ou nul domicile", probabilite: 66.4 }) }], analyses: 1 } }),
+      "POST /api/auto-coupon": () => ({ body: { resultats: [{ index: 0, ...cupLeg({ typePari: "Victoire ou nul équipe 1", probabilite: 66.4 }) }], analyses: 1 } }),
     });
     await openApp();
     userEvent.click(screen.getByRole("button", { name: "Auto" }));
@@ -1059,5 +1071,411 @@ describe("clubs de championnats différents", () => {
       await waitFor(() => expect(savedCatalog()).not.toBeNull());
       expect(savedCatalog().v).toBe(2);
     });
+  });
+});
+
+// ---------- Choix du type de pari ----------
+describe("choix du type de pari", () => {
+  test("le champ montre le pari actuel ; la fenêtre s'ouvre sur sa famille, les autres familles sont repliées", async () => {
+    installFetch({});
+    await openApp();
+    const field = screen.getByRole("button", { name: "Type de pari : Victoire équipe 1" });
+    expect(field).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    userEvent.click(field);
+    expect(field).toHaveAttribute("aria-expanded", "true");
+    expect(pickerDialog()).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByRole("radio", { name: "Victoire équipe 1" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Résultat du match" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Total de buts du match" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("radio", { name: "Plus de 2.5 buts" })).not.toBeInTheDocument();
+  });
+
+  test("les familles se déplient une à une, et choisir un pari ferme la fenêtre", async () => {
+    installFetch({});
+    await openApp();
+    openPicker();
+    userEvent.click(screen.getByRole("button", { name: "Total de buts du match" }));
+    expect(screen.getByRole("radio", { name: "Plus de 2.5 buts" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Moins de 3 buts" })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Victoire équipe 1" })).not.toBeInTheDocument(); // la famille précédente s'est repliée
+    expect(screen.getByRole("button", { name: "Résultat du match" })).toHaveAttribute("aria-expanded", "false");
+    userEvent.click(screen.getByRole("button", { name: "Total de buts du match" })); // toucher la famille ouverte la referme
+    expect(screen.queryByRole("radio", { name: "Plus de 2.5 buts" })).not.toBeInTheDocument();
+    userEvent.click(screen.getByRole("button", { name: "Total de buts du match" }));
+    userEvent.click(screen.getByRole("radio", { name: "Plus de 2.5 buts" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Type de pari : Plus de 2.5 buts" })).toHaveFocus(); // le focus revient au champ
+  });
+
+  test("la fenêtre s'ouvre sur la famille du pari choisi, et les autres familles restent à portée", async () => {
+    installFetch({});
+    await openApp();
+    pickBet("Équipe 2 moins de 1.5 buts");
+    openPicker();
+    expect(screen.getByRole("radio", { name: "Équipe 2 moins de 1.5 buts" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Buts de l'équipe 2" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("radio", { name: "Équipe 2 plus de 2.5 buts" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Résultat du match" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("la recherche parcourt toutes les familles, sans accents ni majuscules, « 2,5 » comme « 2.5 »", async () => {
+    installFetch({});
+    await openApp();
+    openPicker();
+    const search = within(pickerDialog()).getByLabelText("Rechercher un pari");
+    userEvent.type(search, "EQUIPE 2 plus de 2,5");
+    expect(screen.getByRole("radio", { name: "Équipe 2 plus de 2.5 buts" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Victoire équipe 2 et plus de 2.5 buts" })).toBeInTheDocument(); // une autre famille
+    expect(screen.queryByRole("radio", { name: "Équipe 2 plus de 1.5 buts" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Équipe 1 plus de 2.5 buts" })).not.toBeInTheDocument();
+    userEvent.clear(search);
+    userEvent.type(search, "pari qui n'existe pas");
+    expect(screen.getByText("Aucun pari ne correspond à « pari qui n'existe pas ».")).toBeInTheDocument();
+    userEvent.click(screen.getByRole("button", { name: "Effacer la recherche" })); // retour à la liste par familles
+    expect(screen.getByRole("radio", { name: "Victoire équipe 1" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Résultat du match" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  test("la fenêtre se ferme par Échap, par « Fermer » ou en touchant le fond, sans changer le pari", async () => {
+    installFetch({});
+    await openApp();
+    const field = () => screen.getByRole("button", { name: "Type de pari : Victoire équipe 1" });
+    openPicker();
+    fireEvent.keyDown(pickerDialog(), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(field()).toHaveFocus();
+    openPicker();
+    userEvent.click(screen.getByRole("button", { name: "Fermer" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    openPicker();
+    // eslint-disable-next-line testing-library/no-node-access
+    userEvent.click(pickerDialog().parentElement); // le fond sombre autour de la fenêtre
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(field()).toBeInTheDocument();
+  });
+
+  test("la page derrière ne défile pas pendant que la fenêtre est ouverte, et Tab reste dans la fenêtre", async () => {
+    installFetch({});
+    await openApp();
+    openPicker();
+    expect(document.body.style.overflow).toBe("hidden");
+    const first = screen.getByRole("button", { name: "Fermer" }); // premier élément de la fenêtre
+    const last = screen.getByRole("button", { name: "Score" }); // dernier : la dernière famille
+    last.focus();
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(first).toHaveFocus(); // retour au début au lieu de sortir de la fenêtre
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    expect(last).toHaveFocus();
+    userEvent.click(screen.getByRole("button", { name: "Fermer" }));
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  test("un pari à ligne entière annonce qu'il est remboursé quand le résultat tombe pile sur la ligne", async () => {
+    installFetch({});
+    await openApp();
+    expect(screen.queryByText(/remboursé si/i)).not.toBeInTheDocument(); // « Victoire équipe 1 » n'est jamais remboursé
+    pickBet("Plus de 2 buts");
+    expect(screen.getByText("Ligne entière : remboursé si le match se termine avec exactement 2 buts au total.")).toBeInTheDocument();
+    openPicker();
+    expect(screen.getAllByText("Remboursé si le match se termine avec exactement 2 buts au total")).toHaveLength(2); // « plus de » et « moins de » 2 buts
+    expect(screen.queryByText(/Remboursé si l'équipe 1/)).not.toBeInTheDocument(); // une autre famille, repliée
+  });
+
+  test("le pari choisi est envoyé tel quel au serveur, et reste choisi pour le match suivant", async () => {
+    const calls = installFetch({ "POST /api/analyze": () => ({ body: { legs: [okLeg({ typePari: "Victoire ou nul équipe 2 et plus de 1.5 buts" })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Victoire ou nul équipe 2 et plus de 1.5 buts");
+    expect(screen.getByRole("button", { name: "Type de pari : Victoire ou nul équipe 2 et plus de 1.5 buts" })).toBeInTheDocument();
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await screen.findByText("62 %", { selector: ".sel__prob" });
+    expect(calls[0].body.legs).toEqual([{ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Victoire ou nul équipe 2 et plus de 1.5 buts" }]);
+  });
+});
+
+// ---------- Paris à ligne entière : remboursement ----------
+describe("remboursement des paris à ligne entière", () => {
+  test("lecture : le serveur annonce la probabilité et le cas du remboursement", () => {
+    expect(toEstimate(okLeg({ typePari: "Plus de 2 buts", remboursement: REFUND })).refund).toEqual(REFUND);
+    expect(fromTopMatch(topEntry(0, { remboursement: REFUND })).refund).toEqual(REFUND);
+  });
+
+  test("sans remboursement annoncé (ou avec une valeur illisible), rien n'est inventé", () => {
+    expect(toEstimate(okLeg()).refund).toBeUndefined();
+    expect(fromTopMatch(topEntry(0)).refund).toBeUndefined();
+    for (const bad of [null, undefined, 12, "texte", [], {}, { probabilite: "17", quand: "x" }, { probabilite: 17 }, { probabilite: 17, quand: "  " }, { probabilite: NaN, quand: "x" }]) {
+      expect(asRefund(bad)).toBeUndefined();
+    }
+    expect(asRefund({ probabilite: 17.1, quand: " le total est de 2 buts " })).toEqual({ probabilite: 17.1, quand: "le total est de 2 buts" });
+  });
+
+  test("la phrase de remboursement : avec ou sans probabilité", () => {
+    expect(refundNote(REFUND)).toBe(REFUND_NOTE);
+    expect(refundNote({ quand: "l'équipe 1 marque exactement 1 but" })).toBe("Remboursé si l'équipe 1 marque exactement 1 but.");
+  });
+
+  test("Mon coupon : la règle est rappelée dès l'ajout, la chance de remboursement s'y ajoute après l'analyse", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [okLeg({ typePari: "Plus de 2 buts", probabilite: 55.4, remboursement: REFUND })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 2 buts");
+    expect(screen.getByText("Remboursé si le match se termine avec exactement 2 buts au total.")).toBeInTheDocument();
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    expect(await screen.findByText(REFUND_NOTE)).toBeInTheDocument();
+    expect(screen.queryByText("Remboursé si le match se termine avec exactement 2 buts au total.")).not.toBeInTheDocument();
+    expect(screen.getAllByText("55 %")).toHaveLength(2); // la probabilité de gagner, remboursement exclu ; le total la reprend
+  });
+
+  test("Auto : le remboursement annoncé suit le pari dans le coupon", async () => {
+    installFetch({
+      "POST /api/auto-coupon": () => ({ body: { resultats: [{ index: 0, ...okLeg({ typePari: "Équipe 1 moins de 2 buts", probabilite: 71.3, remboursement: { probabilite: 24.5, quand: "l'équipe 1 marque exactement 2 buts" } }) }], analyses: 1 } }),
+    });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Auto" }));
+    userEvent.type(screen.getByLabelText("Équipe 1 du match à générer"), "Arsenal");
+    userEvent.type(screen.getByLabelText("Équipe 2 du match à générer"), "Chelsea");
+    userEvent.click(screen.getByRole("button", { name: /Ajouter/ }));
+    userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
+    await screen.findByText("Coupon (1 match)");
+    expect(screen.getByText("Équipe 1 moins de 2 buts")).toBeInTheDocument();
+    expect(screen.getByText("Remboursé si l'équipe 1 marque exactement 2 buts (24.5 % de chances).")).toBeInTheDocument();
+  });
+
+  test("Top Matchs : le remboursement est annoncé sur le match, et il suit le pari dans le coupon", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ topMatches: [topEntry(0, { meilleurPari: "Plus de 2 buts", remboursement: REFUND }), topEntry(1)] }) }) });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getAllByText(REFUND_NOTE)).toHaveLength(1); // seul ce match est concerné
+    userEvent.click(screen.getAllByRole("button", { name: "Ajouter ce pronostic" })[0]);
+    userEvent.click(screen.getByRole("button", { name: "Mon coupon" }));
+    expect(screen.getByText(REFUND_NOTE)).toBeInTheDocument();
+  });
+});
+
+// ---------- Anciens noms de paris ----------
+describe("anciens noms de paris", () => {
+  test("un ancien nom renvoyé par le serveur s'affiche sous son nom actuel", async () => {
+    installFetch({
+      "POST /api/auto-coupon": () => ({ body: { resultats: [{ index: 0, ...okLeg({ typePari: "Victoire ou nul domicile", probabilite: 79.2 }) }], analyses: 1 } }),
+    });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Auto" }));
+    userEvent.type(screen.getByLabelText("Équipe 1 du match à générer"), "Arsenal");
+    userEvent.type(screen.getByLabelText("Équipe 2 du match à générer"), "Chelsea");
+    userEvent.click(screen.getByRole("button", { name: /Ajouter/ }));
+    userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
+    await screen.findByText("Coupon (1 match)");
+    expect(screen.getByText("Victoire ou nul équipe 1")).toBeInTheDocument();
+    expect(screen.queryByText("Victoire ou nul domicile")).not.toBeInTheDocument();
+  });
+
+  test("un match du Top Matchs proposé sous un ancien nom s'affiche sous le nom actuel", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ topMatches: [topEntry(1, { meilleurPari: "Victoire/nul domicile + 1.5 buts plus" })] }) }) });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Real Madrid vs Getafe");
+    expect(screen.getByText("Victoire ou nul équipe 1 et plus de 1.5 buts")).toBeInTheDocument();
+    expect(screen.queryByText("Victoire/nul domicile + 1.5 buts plus")).not.toBeInTheDocument();
+  });
+});
+
+// ---------- Onglet Top Matchs : compléments ----------
+describe("onglet Top Matchs : présentation", () => {
+  test("aucune limite de cote : la cote combinée est seulement une information, sans objectif", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload() }) });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getByText("Cote combinée estimée")).toBeInTheDocument();
+    expect(screen.getByText("Probabilité combinée")).toBeInTheDocument();
+    expect(screen.getByText("37.6 %")).toBeInTheDocument();
+    expect(screen.queryByText(/objectif/i)).not.toBeInTheDocument();
+  });
+
+  test("« Détails » montre l'argumentaire et le point de vigilance de chaque match, « Masquer » les cache", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload() }) });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.queryByText("Justification du match 0")).not.toBeInTheDocument();
+    userEvent.click(screen.getByRole("button", { name: "Détails" }));
+    expect(screen.getByText("Justification du match 0")).toBeInTheDocument();
+    expect(screen.getByText("À surveiller : Rotation possible")).toBeInTheDocument();
+    userEvent.click(screen.getByRole("button", { name: "Masquer" }));
+    expect(screen.queryByText("Justification du match 0")).not.toBeInTheDocument();
+  });
+
+  test("« Actualiser » relance la recherche", async () => {
+    let hits = 0;
+    installFetch({ "GET /api/top-matches": () => { hits += 1; return { body: topPayload() }; } });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Arsenal vs Chelsea");
+    userEvent.click(screen.getByRole("button", { name: "Actualiser" }));
+    await waitFor(() => expect(hits).toBe(2));
+  });
+
+  test("le niveau de confiance est écrit à côté de la jauge, et la barre porte la couleur de la probabilité", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ topMatches: [topEntry(0, { probabilite: 45, niveauConfiance: "faible" }), topEntry(1)] }) }) });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getByText("Confiance : faible")).toBeInTheDocument();
+    expect(screen.getByText("Confiance : moyenne")).toBeInTheDocument();
+    const [weak, solid] = screen.getAllByRole("article");
+    expect(within(weak).getByText("45 %")).toBeInTheDocument();
+    expect(weak).toHaveClass("tone-loss"); // sous 50 %
+    expect(within(solid).getByText("76.1 %")).toBeInTheDocument();
+    expect(solid).toHaveClass("tone-win"); // 70 % et plus
+  });
+});
+
+// ---------- Onglet Mon coupon : compléments ----------
+describe("onglet Mon coupon : saisie", () => {
+  test("ajouter sans nom d'équipe n'ajoute rien", async () => {
+    installFetch({});
+    await openApp();
+    userEvent.type(screen.getByLabelText("Équipe 1 (à domicile)"), "Arsenal");
+    userEvent.click(screen.getByRole("button", { name: /^Ajouter$/ }));
+    expect(screen.queryByText(/^Coupon \(/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Enregistrer" })).not.toBeInTheDocument();
+    expect(screen.getByText("Votre coupon est vide")).toBeInTheDocument();
+  });
+
+  test("retirer une sélection la sort du coupon", async () => {
+    installFetch({});
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Match nul");
+    await addMatch("Inter", "Torino", "Match nul");
+    expect(screen.getByText("Coupon (2 matchs)")).toBeInTheDocument();
+    userEvent.click(screen.getByRole("button", { name: "Retirer Arsenal vs Chelsea" }));
+    expect(screen.queryByText("Arsenal vs Chelsea")).not.toBeInTheDocument();
+    expect(screen.getByText("Coupon (1 match)")).toBeInTheDocument();
+  });
+
+  test("le verdict suit la probabilité combinée et la cote équitable en découle", async () => {
+    installFetch({ "POST /api/analyze": () => ({ body: { legs: [okLeg({ probabilite: 80 }), okLeg({ equipe1: "Inter", equipe2: "Torino", typePari: "Match nul", probabilite: 50 })] } }) });
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Plus de 1.5 buts");
+    await addMatch("Inter", "Torino", "Match nul");
+    userEvent.click(screen.getByRole("button", { name: /Analyser/ }));
+    await screen.findByText("40 %"); // 0,80 × 0,50
+    expect(screen.getByText("Risqué")).toBeInTheDocument(); // entre 25 % et 50 %
+    expect(screen.getByText("2.50")).toBeInTheDocument(); // 1 ÷ 0,40
+    expect(screen.getByText(/Sélection la plus fragile : Inter vs Torino \(50 %\)\. Sans elle : 80 %\./)).toBeInTheDocument();
+  });
+
+  test("le coupon enregistré est vidé, et le pari choisi dans la fenêtre est celui de l'historique", async () => {
+    installFetch({});
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Équipe 1 plus de 1.5 buts");
+    userEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+    expect(screen.queryByText(/^Coupon \(/)).not.toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("coupon-pronostics"))[0]).toMatchObject({ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Équipe 1 plus de 1.5 buts", statut: "en_attente" });
+  });
+});
+
+// ---------- Onglet Historique ----------
+describe("onglet Historique", () => {
+  const entry = (over = {}) => ({
+    id: "p1", couponId: "c1", equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Plus de 1.5 buts", cote: null, matchDate: "2026-10-18",
+    statut: "en_attente", date: new Date(2026, 9, 18, 12, 0).toISOString(), ...over,
+  });
+  const seedHistory = (list) => localStorage.setItem("coupon-pronostics", JSON.stringify(list));
+  const savedHistory = () => JSON.parse(localStorage.getItem("coupon-pronostics"));
+  const openHistory = async () => {
+    installFetch({});
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Historique" }));
+  };
+
+  test("sans coupon enregistré : un message explique où les trouver", async () => {
+    await openHistory();
+    expect(screen.getByText("Aucun coupon")).toBeInTheDocument();
+    expect(screen.getByText(/Enregistrez un coupon depuis l'onglet/)).toBeInTheDocument();
+  });
+
+  test("un coupon porte sa date et son état ; les paris se marquent gagnés ou perdus", async () => {
+    seedHistory([entry({ id: "a1" }), entry({ id: "a2", equipe1: "Inter", equipe2: "Torino", typePari: "Match nul" })]);
+    await openHistory();
+    expect(screen.getByText("18/10/2026")).toBeInTheDocument();
+    expect(screen.getByText("En attente")).toBeInTheDocument();
+    expect(screen.getByText("Arsenal vs Chelsea - Plus de 1.5 buts")).toBeInTheDocument();
+    userEvent.click(screen.getAllByRole("button", { name: "Marquer comme gagné" })[0]);
+    userEvent.click(screen.getByRole("button", { name: "Marquer comme perdu" }));
+    expect(await screen.findByText("Perdu")).toBeInTheDocument(); // un seul pari perdu suffit à faire perdre le coupon
+    expect(screen.getByText("V")).toBeInTheDocument();
+    expect(screen.getByText("X")).toBeInTheDocument();
+    expect(savedHistory().map((p) => p.statut)).toEqual(["gagne", "perdu"]);
+  });
+
+  test("marquer le dernier pari d'un coupon gagné le fait passer à « Gagné » et met à jour la réussite", async () => {
+    seedHistory([
+      entry({ id: "a1", statut: "gagne" }),
+      entry({ id: "a2", equipe1: "Inter", equipe2: "Torino" }),
+      entry({ id: "b1", couponId: "c2", equipe1: "Paris SG", equipe2: "Marseille", statut: "perdu", date: new Date(2026, 9, 17, 12, 0).toISOString() }),
+    ]);
+    await openHistory();
+    expect(screen.getByText("En attente")).toBeInTheDocument();
+    userEvent.click(screen.getByRole("button", { name: "Marquer comme gagné" })); // un seul pari est encore en attente
+    expect(await screen.findByText("Gagné")).toBeInTheDocument();
+    expect(screen.queryByText("En attente")).not.toBeInTheDocument();
+    expect(screen.getByText(/Réussite/)).toHaveTextContent("Réussite : 67 %"); // 2 gagnés sur 3
+    expect(screen.getByText(/Clôturés/)).toHaveTextContent("Clôturés : 3");
+    expect(savedHistory().find((p) => p.id === "a2").statut).toBe("gagne");
+  });
+
+  test("les coupons sont classés du plus récent au plus ancien", async () => {
+    seedHistory([
+      entry({ id: "old", couponId: "c-old", equipe1: "Ancien", equipe2: "Match", date: new Date(2026, 9, 10, 12, 0).toISOString() }),
+      entry({ id: "new", couponId: "c-new", equipe1: "Nouveau", equipe2: "Match", date: new Date(2026, 9, 17, 12, 0).toISOString() }),
+    ]);
+    await openHistory();
+    const rows = screen.getAllByText(/ - Plus de 1\.5 buts$/).map((el) => el.textContent);
+    expect(rows).toEqual(["Nouveau vs Match - Plus de 1.5 buts", "Ancien vs Match - Plus de 1.5 buts"]);
+  });
+
+  test("supprimer un pari le retire de l'historique et de l'appareil", async () => {
+    seedHistory([entry({ id: "a1" }), entry({ id: "a2", equipe1: "Inter", equipe2: "Torino" })]);
+    await openHistory();
+    userEvent.click(screen.getAllByRole("button", { name: "Supprimer ce pari" })[0]);
+    expect(screen.queryByText("Arsenal vs Chelsea - Plus de 1.5 buts")).not.toBeInTheDocument();
+    expect(screen.getByText("Inter vs Torino - Plus de 1.5 buts")).toBeInTheDocument();
+    expect(savedHistory().map((p) => p.id)).toEqual(["a2"]);
+  });
+
+  test("les paris enregistrés sous un ancien nom s'affichent sous le nom actuel, sans toucher à l'enregistrement", async () => {
+    seedHistory([
+      entry({ id: "o1", couponId: "c1", typePari: "Total buts 1.5 plus" }),
+      entry({ id: "o2", couponId: "c1", typePari: "Victoire/nul extérieur + 2.5 buts plus" }),
+      entry({ id: "o3", couponId: "c1", typePari: "Autre" }),
+    ]);
+    await openHistory();
+    expect(screen.getByText("Arsenal vs Chelsea - Plus de 1.5 buts")).toBeInTheDocument();
+    expect(screen.getByText("Arsenal vs Chelsea - Victoire ou nul équipe 2 et plus de 2.5 buts")).toBeInTheDocument();
+    expect(screen.getByText("Arsenal vs Chelsea - Autre")).toBeInTheDocument();
+    expect(savedHistory().map((p) => p.typePari)).toEqual(["Total buts 1.5 plus", "Victoire/nul extérieur + 2.5 buts plus", "Autre"]);
+  });
+
+  test("un pari à ligne entière en attente rappelle le remboursement ; une fois joué, plus de rappel", async () => {
+    seedHistory([
+      entry({ id: "r1", typePari: "Plus de 2 buts" }),
+      entry({ id: "r2", equipe1: "Inter", equipe2: "Torino", typePari: "Match nul" }),
+      entry({ id: "r3", equipe1: "Paris SG", equipe2: "Marseille", typePari: "Moins de 1 but" }),
+    ]);
+    await openHistory();
+    expect(screen.getByText("Remboursé si le match se termine avec exactement 2 buts au total : dans ce cas, supprimez ce pari.")).toBeInTheDocument();
+    expect(screen.getByText("Remboursé si le match se termine avec exactement 1 but au total : dans ce cas, supprimez ce pari.")).toBeInTheDocument();
+    expect(screen.getAllByText(/Remboursé si/)).toHaveLength(2); // pas pour « Match nul »
+    userEvent.click(screen.getAllByRole("button", { name: "Marquer comme gagné" })[0]);
+    expect(screen.getAllByText(/Remboursé si/)).toHaveLength(1);
+  });
+
+  test("l'historique d'un ancien nom compte dans l'estimation d'un pari de même nom actuel", async () => {
+    seedHistory(Array.from({ length: 5 }, (_, i) => entry({ id: `h${i}`, couponId: `c${i}`, typePari: "Victoire domicile", statut: "gagne" })));
+    installFetch({});
+    await openApp();
+    await addMatch("Arsenal", "Chelsea", "Victoire équipe 1");
+    expect(screen.getByText("Estimation d'après votre historique (5 paris), pas encore analysé")).toBeInTheDocument();
   });
 });

@@ -30,7 +30,7 @@
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#0B1F16",
-  "background_color": "#0B1F16",
+  "theme_color": "#07140E",
+  "background_color": "#07140E",
   "categories": ["sports"]
 }
