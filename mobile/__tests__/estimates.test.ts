@@ -1,4 +1,4 @@
-import { asCross, asRefund, awaitsReview, crossLeagueNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, refundNote, toEstimate } from "../src/estimates";
+import { asCross, asRefund, asTarget, awaitsReview, crossLeagueNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, refundNote, targetNote, targetShortfall, toEstimate } from "../src/estimates";
 import type { Estimate } from "../src/types";
 import { CROSS_MESSAGE, CROSS_WEAK_MESSAGE, cross, cupLeg, okLeg, quick, topEntry } from "../test-support/fixtures";
 
@@ -86,7 +86,7 @@ describe("lecture des réponses du serveur", () => {
 
   test("un match du Top Matchs garde ses détails", () => {
     const e = fromTopMatch(topEntry(0));
-    expect(e.p).toBeCloseTo(0.784, 5);
+    expect(e.p).toBeCloseTo(0.674, 5);
     expect(e.vigilance).toBe("Rotation possible");
     expect(e.statsEquipe1).toEqual({ forme: "VVNVV" });
     expect(fromTopMatch({} as never).p).toBeNull();
@@ -192,5 +192,40 @@ describe("remboursement des paris à ligne entière", () => {
   test("la phrase de remboursement : avec ou sans probabilité", () => {
     expect(refundNote(remboursement)).toBe("Remboursé si le match se termine avec exactement 2 buts au total (17.1 % de chances).");
     expect(refundNote({ quand: "l'équipe 1 marque exactement 1 but" })).toBe("Remboursé si l'équipe 1 marque exactement 1 but.");
+  });
+});
+
+describe("cote visée par « Top Matchs » et « Auto »", () => {
+  test("l'objectif annoncé par le serveur est lu tel quel ; une valeur absente ou illisible n'en fait pas un objectif", () => {
+    expect(asTarget(5)).toBe(5);
+    expect(asTarget(2.5)).toBe(2.5);
+    for (const bad of [undefined, null, "5", NaN, Infinity, 0, 1, -3, {}, []]) expect(asTarget(bad)).toBeUndefined();
+  });
+
+  test("la ligne sous la cote combinée : atteinte, non atteinte, ou sans verdict", () => {
+    expect(targetNote(5, true)).toBe("Cote visée : 5 ou plus (atteinte)");
+    expect(targetNote(5, false)).toBe("Cote visée : 5 ou plus (non atteinte)");
+    expect(targetNote(5, null)).toBe("Cote visée : 5 ou plus");
+    expect(targetNote(5)).toBe("Cote visée : 5 ou plus");
+  });
+
+  test("la cote visée s'écrit à la française et sans décimales parasites", () => {
+    expect(targetNote(2.5, true)).toBe("Cote visée : 2,5 ou plus (atteinte)");
+    expect(targetNote(5.3333333, true)).toBe("Cote visée : 5,33 ou plus (atteinte)");
+    expect(targetNote(10, true)).toBe("Cote visée : 10 ou plus (atteinte)");
+  });
+
+  test("un ancien serveur sans objectif : aucune ligne", () => {
+    expect(targetNote(undefined, undefined)).toBeNull();
+    expect(targetNote("5", true)).toBeNull();
+  });
+
+  test("« Auto » n'atteint pas la cote : le message du serveur, puis ce qui arrive aux matchs et au coupon", () => {
+    const message = "La cote visée (5) n'est pas atteinte (cote totale : 3.38). Avec 2 matchs, des paris fiables ne permettent pas d'aller plus haut : ajoutez des matchs.";
+    expect(targetShortfall({ message })).toBe(
+      `${message} Les matchs restent dans la liste : une nouvelle génération remplacera les pronostics que celle-ci vient d'ajouter à votre coupon.`,
+    );
+    expect(targetShortfall({})).toMatch(/^La cote visée n'est pas atteinte avec ces matchs\. Les matchs restent dans la liste/);
+    expect(targetShortfall(null)).toMatch(/^La cote visée n'est pas atteinte avec ces matchs\./);
   });
 });

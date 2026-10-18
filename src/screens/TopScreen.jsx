@@ -1,7 +1,7 @@
 import React from "react";
 import { Check, Eye, EyeOff, Plus, RefreshCw, Search, Star, Zap } from "lucide-react";
 import { canonicalLabel } from "../betTypes";
-import { asCross, asRefund, confidenceLabel, confidenceLevel, crossLeagueNote, refundNote } from "../estimates";
+import { asCross, asRefund, confidenceLabel, confidenceLevel, crossLeagueNote, refundNote, targetNote } from "../estimates";
 import { formatDate } from "../format";
 import { Btn, Card, ChipBtn, Icon, Meter, Note, ProbBar, ScreenTitle, Spinner, Tile, probTone } from "../ui";
 
@@ -69,7 +69,7 @@ export default function TopScreen({ c }) {
 
   return (
     <div>
-      <ScreenTitle icon={Zap} title="Top 3 Matchs à venir" subtitle={subtitle} />
+      <ScreenTitle icon={Zap} title="Top 4 Matchs à venir" subtitle={subtitle} />
 
       <div className="toolbar">
         {!topLoading && (topAt > 0 || topError) ? <ChipBtn tone="gold" icon={RefreshCw} onClick={c.fetchTopMatches}>Actualiser</ChipBtn> : null}
@@ -95,7 +95,7 @@ export default function TopScreen({ c }) {
       {!topLoading && topMatches.length > 0 && topMeta ? (
         <Card className="summary" style={{ marginTop: 14 }}>
           <div className="summary__tiles">
-            <Tile label="Cote combinée estimée">
+            <Tile label="Cote combinée estimée" hint={targetNote(topMeta.objectifCote, topMeta.objectifCoteAtteint)}>
               <span className="tile__value summary__value--gold">{topMeta.coteTotale}</span>
             </Tile>
             <Tile label="Probabilité combinée">

@@ -119,11 +119,12 @@ export function Meter({ level, tone = "gold" }) {
 }
 
 /** Zone en relief à l'intérieur d'une carte : un petit titre et son contenu. */
-export function Tile({ label, children }) {
+export function Tile({ label, hint, children }) {
   return (
     <div className="tile">
       <span className="tile__label">{label}</span>
       {children}
+      {hint ? <span className="tile__hint">{hint}</span> : null}
     </div>
   );
 }

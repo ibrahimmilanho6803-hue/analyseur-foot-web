@@ -4,9 +4,9 @@ Application React qui affiche les pronostics calculés par le serveur
 [analyseur-foot-backend](https://github.com/ibrahimmilanho6803-hue/analyseur-foot-backend). Elle existe en deux versions : ce site
 (dossier `src/`) et une **vraie application Android en React Native** (dossier [`mobile/`](#application-mobile-react-native)).
 
-- **Top Matchs** : les 3 meilleurs matchs à venir (le pari le plus fiable de chacun, quelle que soit sa cote), avec la cote combinée *estimée*.
+- **Top Matchs** : 4 matchs à venir, un pari par match, choisis pour que la cote totale atteigne **5** avec des paris aussi fiables que possible ; la cote combinée est *estimée*.
 - **Mon coupon** : saisie de sélections parmi **103 types de paris**, analyse par le serveur (modèle statistique relu par l'IA), probabilité de chaque sélection et du coupon.
-- **Auto** : le serveur choisit le pari le plus probable de chaque match saisi, **sans limite de cote** ([voir plus bas](#103-types-de-paris-sans-limite-de-cote)).
+- **Auto** : le serveur choisit un pari par match saisi avec la même règle que « Top Matchs » : cote totale d'au moins **5**, paris aussi fiables que possible ([voir plus bas](#103-types-de-paris)).
 - **N'importe quel match** : Mon coupon et Auto acceptent deux clubs du même championnat, de championnats différents (Ligue des
   champions, Ligue Europa, Ligue Conférence…) ou un club que seules les coupes d'Europe font connaître ([voir plus bas](#matchs-entre-championnats-ligue-des-champions)).
 - **Historique** : coupons enregistrés sur l'appareil (stockage local du navigateur).
@@ -47,7 +47,7 @@ d'Europe : le résultat est **moins précis** qu'entre deux clubs d'un même cha
 
 Avec un serveur plus ancien, ces informations n'existent pas et rien ne s'affiche en plus : le comportement est celui d'avant.
 
-## 103 types de paris, sans limite de cote
+## 103 types de paris
 
 **103 types de paris**, en 15 familles : résultat du match ; total de buts du match (de 0.5 à 3.5) ; les deux équipes marquent ; buts de
 l'équipe 1 ; buts de l'équipe 2 ; résultat et total de buts du match (quatre familles : victoire équipe 1, victoire ou nul équipe 1, victoire
@@ -62,13 +62,16 @@ L'équipe 1 reçoit (domicile), l'équipe 2 se déplace ; « victoire ou nul » 
   un pari » filtre tous les paris à la fois : sans accents ni majuscules, « 2,5 » et « 2.5 » sont la même ligne, les mots peuvent venir
   dans n'importe quel ordre (« nul équipe 1 », « plus 2.5 »), et « 2 » désigne l'équipe 2 ou la ligne de 2 buts, jamais « 2.5 ». La
   touche Échap ferme la fenêtre, Tab reste dans la fenêtre, et le focus revient au champ à la fermeture.
-- **Plus aucune limite de cote** : « Top Matchs » et « Auto » ne visent plus une cote totale de 2.5 ni une fourchette de probabilité
-  (55 à 88 %). Le serveur retient, pour chaque match, le pari **le plus probable**, quelle que soit sa cote, et « Top Matchs » garde
-  les 3 matchs dont ce pari est le plus sûr. **Conséquence directe** : ces paris sont très probables (souvent plus de 90 %), donc leur
-  **cote équitable est basse** (1.03 à 1.10 le plus souvent : « plus de 0.5 buts », ou le « moins de » d'une équipe très inférieure) ;
-  un coupon de plusieurs matchs rapporte peu. Le site affiche la cote équitable estimée (1 ÷ probabilité, sans marge de bookmaker : celle
-  d'un opérateur sera plus basse encore). Aucune probabilité n'est affichée au-delà de 99 %. Le réglage facultatif `PICK_MAX_PROBABILITY`
-  du serveur (voir son README) permet d'écarter les paris quasi certains ; le site n'a rien à régler.
+- **Cote totale visée : 5** : « Top Matchs » (4 matchs) et « Auto » visent une cote totale d'**au moins 5** (cotes équitables, 1 ÷ probabilité).
+  Les cotes se multiplient : 5 correspond à environ 20 % de chances pour le coupon entier. Le serveur choisit, pour chaque match, le pari qui
+  rend le **plus faible des paris le plus sûr possible** tout en atteignant 5 : avec 4 matchs, environ 67 % de chances par pari (cote
+  d'environ 1,5 chacun) ; plus il y a de matchs, plus chaque pari est sûr. Sous la cote combinée, le site écrit « Cote visée : 5 ou plus
+  (atteinte) » ou « (non atteinte) ». Quand la cote n'est pas atteignable (moins de 3 matchs, par exemple), il affiche le message du
+  serveur ; dans « Auto », les pronostics sont quand même ajoutés au coupon, les matchs restent dans la liste, et une nouvelle génération
+  (avec plus de matchs) **remplace** les pronostics ajoutés par la précédente au lieu de les doubler. La cote affichée est une cote
+  équitable estimée (sans marge de bookmaker : celle d'un opérateur sera plus basse). Aucune probabilité n'est affichée au-delà de 99 %.
+  Le réglage `TOP_TARGET_ODDS` du serveur (voir son README) change la cote visée ; le site n'a rien à régler, mais le texte d'aide de
+  l'onglet « Auto » annonce 5.
 - **Paris à ligne entière et remboursement** : pour 14 types (« plus de 2 buts », « équipe 1 moins de 1 but »…), la mise est **rendue**
   quand le résultat tombe pile sur la ligne. La probabilité affichée est celle de **gagner quand le pari n'est pas remboursé** ; la
   probabilité du remboursement vient à part du serveur (`remboursement`) et s'affiche sous le pari : « Remboursé si le match se termine

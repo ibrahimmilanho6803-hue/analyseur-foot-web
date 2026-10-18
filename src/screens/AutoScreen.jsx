@@ -3,7 +3,7 @@ import { ArrowRight, Cpu, House, ListChecks, MapPin, Plus, Trash2, Zap } from "l
 import TeamInput from "../TeamInput";
 import { Btn, Card, ChipBtn, EmptyState, IconBtn, Note, SectionTitle, Spinner } from "../ui";
 
-// Onglet « Auto » : on saisit des matchs, le serveur choisit le pari le plus fiable de chacun. Sur grand écran, la saisie est à gauche
+// Onglet « Auto » : on saisit des matchs, le serveur choisit un pari par match pour atteindre la cote visée. Sur grand écran, la saisie est à gauche
 // et la liste des matchs à droite ; sur téléphone, tout s'enchaîne dans une seule colonne.
 export default function AutoScreen({ c }) {
   const { genForm, catalog, matchesToGenerate, genReport, genLoading } = c;
@@ -15,8 +15,8 @@ export default function AutoScreen({ c }) {
       <div className="auto-layout__form">
         <SectionTitle icon={Cpu}>Génération automatique</SectionTitle>
         <p className="intro">
-          Saisissez des matchs : le serveur choisit pour chacun le pari le plus fiable, c'est-à-dire le plus probable, quelle que soit sa cote. L'équipe 1 reçoit, l'équipe 2 se déplace. Les deux clubs peuvent venir de championnats
-          différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
+          Saisissez au moins 3 matchs : le serveur choisit pour chacun un pari de façon que la cote totale du coupon atteigne 5, avec des paris aussi fiables que possible. L'équipe 1 reçoit, l'équipe 2 se déplace.
+          Les deux clubs peuvent venir de championnats différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
         </p>
 
         <TeamInput
@@ -46,7 +46,7 @@ export default function AutoScreen({ c }) {
         {empty ? (
           <div className="auto-empty">
             <EmptyState icon={ListChecks} title="Aucun match à générer">
-              Ajoutez des matchs avec le formulaire : le serveur choisira le pari le plus fiable de chacun.
+              Ajoutez au moins 3 matchs avec le formulaire : le serveur choisira un pari par match pour atteindre une cote totale de 5.
             </EmptyState>
           </div>
         ) : (
@@ -75,6 +75,7 @@ export default function AutoScreen({ c }) {
             {genReport.problems.map((problem, i) => (
               <Note key={i} tone={found ? "warn" : "bad"}>{problem}</Note>
             ))}
+            {genReport.notice ? <Note>{genReport.notice}</Note> : null}
           </div>
         ) : null}
 

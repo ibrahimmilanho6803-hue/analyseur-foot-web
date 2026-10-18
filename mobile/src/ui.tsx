@@ -198,11 +198,12 @@ export function Meter({ level, color }: { level: 0 | 1 | 2 | 3; color: string })
 }
 
 /** Zone en relief à l'intérieur d'une carte : un petit titre en capitales et son contenu. */
-export function Tile({ label, children, style }: { label: string; children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
+export function Tile({ label, hint, children, style }: { label: string; hint?: string | null; children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
   return (
     <View style={[s.tile, style]}>
       <Txt style={s.tileLabel}>{label}</Txt>
       {children}
+      {hint ? <Txt style={s.tileHint}>{hint}</Txt> : null}
     </View>
   );
 }
@@ -252,6 +253,7 @@ const s = StyleSheet.create({
   meterBar: { width: 4, borderRadius: 2 },
   tile: { flex: 1, backgroundColor: T.raised, borderRadius: RD.md, borderWidth: 1, borderColor: T.line, paddingVertical: SP.md, paddingHorizontal: SP.md, gap: 4 },
   tileLabel: { fontFamily: F.bodyMedium, fontSize: 12, color: T.chalkDim },
+  tileHint: { fontFamily: F.body, fontSize: 12, lineHeight: 17, color: T.chalkDim },
   empty: { alignItems: "center", paddingVertical: SP.xl, gap: SP.sm },
   emptyIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: T.raised, borderWidth: 1, borderColor: T.line, alignItems: "center", justifyContent: "center", marginBottom: 4 },
   emptyTitle: { fontFamily: F.bodySemi, fontSize: 16 },

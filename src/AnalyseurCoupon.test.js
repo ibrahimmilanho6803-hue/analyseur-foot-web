@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { asCross, asRefund, awaitsReview, callApi, crossLeagueNote, crossTotalNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, refundNote, toEstimate } from "./AnalyseurCoupon";
+import { asCross, asRefund, asTarget, awaitsReview, callApi, crossLeagueNote, crossTotalNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, refundNote, targetNote, targetShortfall, toEstimate } from "./AnalyseurCoupon";
 import { CATALOG } from "./testData";
 
 // ---------- Faux serveur : chaque appel est enregistré, aucun appel réseau réel ----------
@@ -36,18 +36,19 @@ function installFetch(routes) {
 
 const inFuture = (hours) => new Date(Date.now() + hours * 3600000).toISOString();
 
+// Quatre matchs, comme le « Top Matchs » du serveur : des paris autour de 67 % de chances, pour une cote totale d'environ 5.
 const topEntry = (i, over = {}) => ({
   id: 100 + i,
-  homeTeam: ["Arsenal", "Real Madrid", "Inter"][i],
-  awayTeam: ["Chelsea", "Getafe", "Torino"][i],
-  competition: ["Premier League", "Primera División", "Serie A"][i],
+  homeTeam: ["Arsenal", "Real Madrid", "Inter", "Napoli"][i],
+  awayTeam: ["Chelsea", "Getafe", "Torino", "Genoa"][i],
+  competition: ["Premier League", "Primera División", "Serie A", "Serie A"][i],
   date: inFuture(10 + i),
-  meilleurPari: ["Plus de 1.5 buts", "Victoire ou nul équipe 1", "Plus de 0.5 buts"][i],
-  probabilite: [78.4, 76.1, 83.9][i],
-  probabiliteModele: [77, 75, 83][i],
+  meilleurPari: ["Plus de 1.5 buts", "Victoire ou nul équipe 1", "Équipe 1 plus de 1.5 buts", "Moins de 3.5 buts"][i],
+  probabilite: [67.4, 66.6, 66.8, 66.5][i],
+  probabiliteModele: [67, 66, 66, 66][i],
   ajustementIA: 0.5,
-  coteEstimee: [1.28, 1.31, 1.19][i],
-  niveauConfiance: ["eleve", "moyen", "eleve"][i],
+  coteEstimee: [1.48, 1.5, 1.5, 1.5][i],
+  niveauConfiance: ["eleve", "moyen", "eleve", "moyen"][i],
   justification: `Justification du match ${i}`,
   vigilance: i === 0 ? "Rotation possible" : "",
   statsHome: { forme: "VVNVV" },
@@ -64,9 +65,11 @@ const topPayload = (over = {}) => ({
   avertissement: "Cotes estimées (1 ÷ probabilité), sans marge de bookmaker : les cotes réelles proposées par un opérateur seront plus basses.",
   complet: true,
   donnees: { championnatsPrets: ["PL", "PD", "SA", "BL1", "FL1", "PPL", "DED", "BSA"] },
-  topMatches: [topEntry(0), topEntry(1), topEntry(2)],
-  coteTotale: "2.66",
-  probabiliteCombinee: 37.6,
+  topMatches: [topEntry(0), topEntry(1), topEntry(2), topEntry(3)],
+  coteTotale: "5.01",
+  probabiliteCombinee: 19.9,
+  objectifCote: 5,
+  objectifCoteAtteint: true,
   ia: { statut: "ok", modele: "claude-sonnet-5-5" },
   ...over,
 });
@@ -189,7 +192,7 @@ describe("lecture des réponses du serveur", () => {
 
   test("un match du Top Matchs garde ses détails", () => {
     const e = fromTopMatch(topEntry(0));
-    expect(e.p).toBeCloseTo(0.784, 5);
+    expect(e.p).toBeCloseTo(0.674, 5);
     expect(e.vigilance).toBe("Rotation possible");
     expect(e.statsEquipe1).toEqual({ forme: "VVNVV" });
     expect(fromTopMatch({}).p).toBeNull();
@@ -237,15 +240,20 @@ describe("appel du serveur", () => {
 
 // ---------- Parcours dans l'application ----------
 describe("onglet Top Matchs", () => {
-  test("affiche les 3 matchs, la cote combinée estimée et l'avertissement sur les cotes", async () => {
+  test("affiche les 4 matchs, la cote combinée estimée, la cote visée et l'avertissement sur les cotes", async () => {
     const calls = installFetch({ "GET /api/top-matches": () => ({ body: topPayload() }) });
     await openApp();
     userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
     await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getByText("Top 4 Matchs à venir")).toBeInTheDocument();
     expect(screen.getByText("Real Madrid vs Getafe")).toBeInTheDocument();
     expect(screen.getByText("Inter vs Torino")).toBeInTheDocument();
-    expect(screen.getByText("78.4 %")).toBeInTheDocument();
-    expect(screen.getByText("2.66")).toBeInTheDocument();
+    expect(screen.getByText("Napoli vs Genoa")).toBeInTheDocument();
+    expect(screen.getByText("67.4 %")).toBeInTheDocument();
+    expect(screen.getByText("5.01")).toBeInTheDocument(); // cote combinée
+    expect(screen.getByText("19.9 %")).toBeInTheDocument(); // probabilité combinée
+    expect(screen.getByText("Cote visée : 5 ou plus (atteinte)")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Ajouter ce pronostic" })).toHaveLength(4);
     expect(screen.getByText(/Cotes estimées \(1 ÷ probabilité\)/)).toBeInTheDocument(); // avertissement envoyé par le serveur
     expect(screen.getByText(/Analyse de 8 championnats/)).toBeInTheDocument();
     expect(calls.filter((c) => c.path === "/api/top-matches")).toHaveLength(1);
@@ -285,7 +293,7 @@ describe("onglet Top Matchs", () => {
     userEvent.click(screen.getAllByRole("button", { name: "Ajouter ce pronostic" })[0]);
     expect(screen.getByRole("button", { name: "Déjà dans le coupon" })).toBeDisabled();
     userEvent.click(screen.getByRole("button", { name: "Mon coupon" }));
-    expect(screen.getAllByText("78 %").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("67 %").length).toBeGreaterThan(0);
     expect(screen.queryByText("Estimation indicative")).not.toBeInTheDocument(); // l'analyse du serveur est déjà là
     expect(screen.queryByText(/pas d'analyse chiffrée/)).not.toBeInTheDocument();
   });
@@ -390,12 +398,16 @@ describe("onglet Auto", () => {
       "POST /api/auto-coupon": () => ({
         body: {
           resultats: [
-            { index: 0, ...okLeg({ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Victoire ou nul équipe 1", probabilite: 79.2 }) },
-            { index: 1, ...okLeg({ equipe1: "Inter", equipe2: "Torino", typePari: "Plus de 0.5 buts", probabilite: 91.0 }) },
+            { index: 0, ...okLeg({ equipe1: "Arsenal", equipe2: "Chelsea", typePari: "Victoire ou nul équipe 1", probabilite: 67.2 }) },
+            { index: 1, ...okLeg({ equipe1: "Inter", equipe2: "Torino", typePari: "Plus de 1.5 buts", probabilite: 66.8 }) },
+            { index: 2, ...okLeg({ equipe1: "Real Madrid", equipe2: "Getafe", typePari: "Moins de 3.5 buts", probabilite: 66.5 }) },
+            { index: 3, ...okLeg({ equipe1: "Napoli", equipe2: "Genoa", typePari: "Équipe 1 plus de 1.5 buts", probabilite: 66.6 }) },
           ],
-          analyses: 2,
-          probabiliteCombinee: 72.1,
-          coteTotale: "1.39",
+          analyses: 4,
+          probabiliteCombinee: 19.9,
+          coteTotale: "5.03",
+          objectifCote: 5,
+          objectifCoteAtteint: true,
           avertissement: "Cotes estimées",
         },
       }),
@@ -404,15 +416,127 @@ describe("onglet Auto", () => {
     userEvent.click(screen.getByRole("button", { name: "Auto" }));
     typeMatch("Arsenal", "Chelsea");
     typeMatch("Inter", "Torino");
+    typeMatch("Real Madrid", "Getafe");
+    typeMatch("Napoli", "Genoa");
     userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
-    await screen.findByText("Coupon (2 matchs)");
+    await screen.findByText("Coupon (4 matchs)");
     expect(screen.getByText("Victoire ou nul équipe 1")).toBeInTheDocument(); // le pari choisi par le serveur, sur la carte du match
-    expect(screen.getByText("Plus de 0.5 buts")).toBeInTheDocument();
-    expect(screen.getByText("79 %")).toBeInTheDocument();
+    expect(screen.getByText("Moins de 3.5 buts")).toBeInTheDocument();
+    expect(screen.getAllByText("67 %").length).toBeGreaterThan(0); // 67.2, 66.8, 66.5 et 66.6 s'affichent tous « 67 % »
     expect(calls).toHaveLength(1);
     expect(calls[0].path).toBe("/api/auto-coupon");
-    expect(calls[0].body).toEqual({ matches: [{ equipe1: "Arsenal", equipe2: "Chelsea" }, { equipe1: "Inter", equipe2: "Torino" }] });
+    expect(calls[0].body).toEqual({
+      matches: [
+        { equipe1: "Arsenal", equipe2: "Chelsea" },
+        { equipe1: "Inter", equipe2: "Torino" },
+        { equipe1: "Real Madrid", equipe2: "Getafe" },
+        { equipe1: "Napoli", equipe2: "Genoa" },
+      ],
+    });
     expect(calls.some((c) => /analyze-simple|anthropic/i.test(c.url))).toBe(false);
+    userEvent.click(screen.getByRole("button", { name: "Auto" }));
+    expect(screen.queryByText("Arsenal vs Chelsea")).not.toBeInTheDocument(); // la cote visée est atteinte : les matchs sont passés dans le coupon
+  });
+
+  test("l'écran le dit : au moins 3 matchs, pour une cote totale de 5 avec des paris aussi fiables que possible", async () => {
+    installFetch({});
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Auto" }));
+    expect(screen.getByText(/Saisissez au moins 3 matchs : le serveur choisit pour chacun un pari de façon que la cote totale du coupon atteigne 5, avec des paris aussi fiables que possible/)).toBeInTheDocument();
+    expect(screen.getByText(/Ajoutez au moins 3 matchs avec le formulaire/)).toBeInTheDocument();
+    expect(screen.queryByText(/quelle que soit sa cote/)).not.toBeInTheDocument();
+  });
+
+  describe("cote visée non atteinte", () => {
+    const message = "La cote visée (5) n'est pas atteinte (cote totale : 3.38). Avec 2 matchs, des paris fiables ne permettent pas d'aller plus haut : ajoutez des matchs.";
+    const answer = (body, over = {}) => ({
+      resultats: body.matches.map((m, i) => ({ index: i, ...okLeg({ equipe1: m.equipe1, equipe2: m.equipe2, typePari: "Moins de 3.5 buts", probabilite: 58.2 + i }) })),
+      analyses: body.matches.length,
+      objectifCote: 5,
+      ...over,
+    });
+
+    test("deux matchs seulement : pronostics ajoutés, message du serveur affiché, matchs conservés, on reste sur Auto", async () => {
+      installFetch({ "POST /api/auto-coupon": (body) => ({ body: answer(body, { coteTotale: "3.38", objectifCoteAtteint: false, message }) }) });
+      await openApp();
+      userEvent.click(screen.getByRole("button", { name: "Auto" }));
+      typeMatch("Arsenal", "Chelsea");
+      typeMatch("Inter", "Torino");
+      userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
+      await screen.findByText(/2 pronostics ajoutés à « Mon coupon »/);
+      expect(screen.getByText(/La cote visée \(5\) n'est pas atteinte \(cote totale : 3\.38\)\. Avec 2 matchs/)).toBeInTheDocument();
+      expect(screen.getByText(/Les matchs restent dans la liste : une nouvelle génération remplacera les pronostics que celle-ci vient d'ajouter à votre coupon\./)).toBeInTheDocument();
+      expect(screen.getByText("Arsenal vs Chelsea")).toBeInTheDocument();
+      expect(screen.getByText("Inter vs Torino")).toBeInTheDocument();
+      userEvent.click(screen.getByRole("button", { name: "Voir mon coupon" }));
+      expect(await screen.findByText("Coupon (2 matchs)")).toBeInTheDocument();
+    });
+
+    test("une nouvelle génération avec plus de matchs remplace les pronostics de la précédente au lieu de les doubler", async () => {
+      let hits = 0;
+      const calls = installFetch({
+        "POST /api/auto-coupon": (body) => {
+          hits += 1;
+          return { body: hits === 1 ? answer(body, { coteTotale: "3.38", objectifCoteAtteint: false, message }) : answer(body, { coteTotale: "5.03", objectifCoteAtteint: true }) };
+        },
+      });
+      await openApp();
+      userEvent.click(screen.getByRole("button", { name: "Auto" }));
+      typeMatch("Arsenal", "Chelsea");
+      typeMatch("Inter", "Torino");
+      userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
+      await screen.findByText(/2 pronostics ajoutés à « Mon coupon »/);
+      typeMatch("Real Madrid", "Getafe");
+      typeMatch("Napoli", "Genoa");
+      userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
+      await screen.findByText("Coupon (4 matchs)"); // et non 6 : les deux premiers pronostics ont été remplacés
+      expect(calls[1].body.matches).toHaveLength(4);
+      userEvent.click(screen.getByRole("button", { name: "Auto" }));
+      expect(screen.queryByText("Arsenal vs Chelsea")).not.toBeInTheDocument(); // la cote est atteinte cette fois : la liste est vidée
+    });
+
+    test("les pronostics ajoutés à la main ne sont jamais remplacés", async () => {
+      let hits = 0;
+      installFetch({
+        "POST /api/auto-coupon": (body) => {
+          hits += 1;
+          return { body: hits === 1 ? answer(body, { coteTotale: "3.38", objectifCoteAtteint: false, message }) : answer(body, { coteTotale: "5.03", objectifCoteAtteint: true }) };
+        },
+      });
+      await openApp();
+      await addMatch("PSG", "OM", "Match nul");
+      userEvent.click(screen.getByRole("button", { name: "Auto" }));
+      typeMatch("Arsenal", "Chelsea");
+      userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
+      await screen.findByText(/1 pronostic ajouté à « Mon coupon »/);
+      typeMatch("Inter", "Torino");
+      userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
+      await screen.findByText("Coupon (3 matchs)"); // le pari saisi à la main + les deux paris de la seconde génération
+      expect(screen.getByText("PSG vs OM")).toBeInTheDocument();
+    });
+
+    test("la cote est passée sous l'objectif à cause de la relecture de l'IA : même message, même comportement", async () => {
+      installFetch({
+        "POST /api/auto-coupon": (body) => ({
+          body: answer(body, { coteTotale: "4.99", objectifCoteAtteint: false, message: "La cote visée (5) n'est pas atteinte (cote totale : 4.99). La relecture de l'IA a légèrement modifié les probabilités." }),
+        }),
+      });
+      await openApp();
+      userEvent.click(screen.getByRole("button", { name: "Auto" }));
+      [["Arsenal", "Chelsea"], ["Inter", "Torino"], ["Real Madrid", "Getafe"], ["Napoli", "Genoa"]].forEach(([home, away]) => typeMatch(home, away));
+      userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
+      await screen.findByText(/cote totale : 4\.99\)\. La relecture de l'IA a légèrement modifié les probabilités\./);
+      expect(screen.getByText(/4 pronostics ajoutés à « Mon coupon »/)).toBeInTheDocument();
+    });
+
+    test("un serveur qui ne parle pas de cote visée (ancienne version) : comportement d'avant, on ouvre « Mon coupon »", async () => {
+      installFetch({ "POST /api/auto-coupon": (body) => ({ body: answer(body, { objectifCote: undefined }) }) });
+      await openApp();
+      userEvent.click(screen.getByRole("button", { name: "Auto" }));
+      typeMatch("Arsenal", "Chelsea");
+      userEvent.click(screen.getByRole("button", { name: "Générer mon coupon" }));
+      await screen.findByText("Coupon (1 match)");
+    });
   });
 
   test("résultat partiel : les matchs réussis sont ajoutés, les autres expliqués et conservés", async () => {
@@ -1252,6 +1376,37 @@ describe("remboursement des paris à ligne entière", () => {
   });
 });
 
+// ---------- Cote visée par « Top Matchs » et « Auto » ----------
+describe("cote visée : lecture de la réponse du serveur", () => {
+  test("l'objectif annoncé par le serveur est lu tel quel ; une valeur absente ou illisible n'en fait pas un objectif", () => {
+    expect(asTarget(5)).toBe(5);
+    expect(asTarget(2.5)).toBe(2.5);
+    [undefined, null, "5", NaN, Infinity, 0, 1, -3, {}, []].forEach((bad) => expect(asTarget(bad)).toBeUndefined());
+  });
+
+  test("la ligne sous la cote combinée : atteinte, non atteinte, ou sans verdict", () => {
+    expect(targetNote(5, true)).toBe("Cote visée : 5 ou plus (atteinte)");
+    expect(targetNote(5, false)).toBe("Cote visée : 5 ou plus (non atteinte)");
+    expect(targetNote(5, null)).toBe("Cote visée : 5 ou plus");
+    expect(targetNote(5)).toBe("Cote visée : 5 ou plus");
+  });
+
+  test("la cote visée s'écrit à la française et sans décimales parasites ; un ancien serveur sans objectif : aucune ligne", () => {
+    expect(targetNote(2.5, true)).toBe("Cote visée : 2,5 ou plus (atteinte)");
+    expect(targetNote(5.3333333, true)).toBe("Cote visée : 5,33 ou plus (atteinte)");
+    expect(targetNote(10, true)).toBe("Cote visée : 10 ou plus (atteinte)");
+    expect(targetNote(undefined, undefined)).toBeNull();
+    expect(targetNote("5", true)).toBeNull();
+  });
+
+  test("« Auto » n'atteint pas la cote : le message du serveur, puis ce qui arrive aux matchs et au coupon", () => {
+    const message = "La cote visée (5) n'est pas atteinte (cote totale : 3.38). Avec 2 matchs, des paris fiables ne permettent pas d'aller plus haut : ajoutez des matchs.";
+    expect(targetShortfall({ message })).toBe(`${message} Les matchs restent dans la liste : une nouvelle génération remplacera les pronostics que celle-ci vient d'ajouter à votre coupon.`);
+    expect(targetShortfall({})).toMatch(/^La cote visée n'est pas atteinte avec ces matchs\. Les matchs restent dans la liste/);
+    expect(targetShortfall(null)).toMatch(/^La cote visée n'est pas atteinte avec ces matchs\./);
+  });
+});
+
 // ---------- Anciens noms de paris ----------
 describe("anciens noms de paris", () => {
   test("un ancien nom renvoyé par le serveur s'affiche sous son nom actuel", async () => {
@@ -1281,15 +1436,54 @@ describe("anciens noms de paris", () => {
 
 // ---------- Onglet Top Matchs : compléments ----------
 describe("onglet Top Matchs : présentation", () => {
-  test("aucune limite de cote : la cote combinée est seulement une information, sans objectif", async () => {
+  test("la cote combinée est accompagnée de la cote visée par le serveur : atteinte, ou non atteinte avec son explication", async () => {
     installFetch({ "GET /api/top-matches": () => ({ body: topPayload() }) });
     await openApp();
     userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
     await screen.findByText("Arsenal vs Chelsea");
     expect(screen.getByText("Cote combinée estimée")).toBeInTheDocument();
     expect(screen.getByText("Probabilité combinée")).toBeInTheDocument();
-    expect(screen.getByText("37.6 %")).toBeInTheDocument();
-    expect(screen.queryByText(/objectif/i)).not.toBeInTheDocument();
+    expect(screen.getByText("19.9 %")).toBeInTheDocument();
+    expect(screen.getByText("Cote visée : 5 ou plus (atteinte)")).toBeInTheDocument();
+  });
+
+  test("cote visée non atteinte (trop peu de matchs) : le message du serveur et la ligne sous la cote le disent", async () => {
+    const message = "Seulement 2 matchs exploitables trouvés dans les 72 prochaines heures. La cote visée (5) n'est pas atteinte avec les matchs disponibles (cote totale : 3.12).";
+    installFetch({
+      "GET /api/top-matches": () => ({ body: topPayload({ topMatches: [topEntry(0), topEntry(1)], coteTotale: "3.12", probabiliteCombinee: 32, objectifCoteAtteint: false, message }) }),
+    });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getByText(message)).toBeInTheDocument();
+    expect(screen.getByText("3.12")).toBeInTheDocument();
+    expect(screen.getByText("Cote visée : 5 ou plus (non atteinte)")).toBeInTheDocument();
+  });
+
+  test("une cote visée décimale s'écrit avec la virgule ; un ancien serveur sans objectif n'affiche pas cette ligne", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ objectifCote: 2.5 }) }) });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getByText("Cote visée : 2,5 ou plus (atteinte)")).toBeInTheDocument();
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ objectifCote: undefined, objectifCoteAtteint: undefined }) }) });
+    userEvent.click(screen.getByRole("button", { name: "Actualiser" }));
+    await screen.findByText("Cote combinée estimée"); // le résumé revient quand la nouvelle réponse est arrivée
+    expect(screen.queryByText(/Cote visée/)).not.toBeInTheDocument();
+  });
+
+  test("le site présente tel quel ce que le serveur choisit, sans rien filtrer", async () => {
+    installFetch({
+      "GET /api/top-matches": () => ({
+        body: topPayload({ topMatches: [topEntry(0, { meilleurPari: "Plus de 0.5 buts", probabilite: 97.2, coteEstimee: 1.03 })], coteTotale: "1.03", probabiliteCombinee: 97.2, objectifCoteAtteint: false }),
+      }),
+    });
+    await openApp();
+    userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getAllByText("97.2 %")).toHaveLength(2); // le match et la probabilité combinée
+    expect(screen.getAllByText("1.03")).toHaveLength(2); // sa cote estimée et la cote combinée
+    expect(screen.getByText("Plus de 0.5 buts")).toBeInTheDocument();
   });
 
   test("« Détails » montre l'argumentaire et le point de vigilance de chaque match, « Masquer » les cache", async () => {
@@ -1316,7 +1510,7 @@ describe("onglet Top Matchs : présentation", () => {
   });
 
   test("le niveau de confiance est écrit à côté de la jauge, et la barre porte la couleur de la probabilité", async () => {
-    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ topMatches: [topEntry(0, { probabilite: 45, niveauConfiance: "faible" }), topEntry(1)] }) }) });
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ topMatches: [topEntry(0, { probabilite: 45, niveauConfiance: "faible" }), topEntry(1, { probabilite: 76.1 })] }) }) });
     await openApp();
     userEvent.click(screen.getByRole("button", { name: "Top Matchs" }));
     await screen.findByText("Arsenal vs Chelsea");

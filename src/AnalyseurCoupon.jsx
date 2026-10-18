@@ -9,7 +9,7 @@ import { useAnalyseur } from "./useAnalyseur";
 
 // Fonctions utilitaires réexportées : les tests (et d'éventuels autres écrans) les importent d'ici.
 export { callApi } from "./api";
-export { asCross, asRefund, awaitsReview, crossLeagueNote, crossTotalNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, refundNote, toEstimate } from "./estimates";
+export { asCross, asRefund, asTarget, awaitsReview, crossLeagueNote, crossTotalNote, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, refundNote, targetNote, targetShortfall, toEstimate } from "./estimates";
 export { useTeamCatalog } from "./useTeamCatalog";
 
 // Mêmes termes que dans l'application mobile.

@@ -39,16 +39,17 @@ export const CATALOG = {
 
 export const inFuture = (hours: number): string => new Date(Date.now() + hours * 3600000).toISOString();
 
+// Quatre matchs, comme le « Top Matchs » du serveur : des paris autour de 67 % de chances, pour une cote totale d'environ 5.
 export const topEntry = (i: number, over: Partial<TopMatch> = {}): TopMatch => ({
   id: 100 + i,
-  homeTeam: ["Arsenal", "Real Madrid", "Inter"][i],
-  awayTeam: ["Chelsea", "Getafe", "Torino"][i],
-  competition: ["Premier League", "Primera División", "Serie A"][i],
+  homeTeam: ["Arsenal", "Real Madrid", "Inter", "Napoli"][i],
+  awayTeam: ["Chelsea", "Getafe", "Torino", "Genoa"][i],
+  competition: ["Premier League", "Primera División", "Serie A", "Serie A"][i],
   date: inFuture(10 + i),
-  meilleurPari: ["Plus de 1.5 buts", "Victoire ou nul équipe 1", "Plus de 0.5 buts"][i],
-  probabilite: [78.4, 76.1, 83.9][i],
-  coteEstimee: [1.28, 1.31, 1.19][i],
-  niveauConfiance: ["eleve", "moyen", "eleve"][i],
+  meilleurPari: ["Plus de 1.5 buts", "Victoire ou nul équipe 1", "Équipe 1 plus de 1.5 buts", "Moins de 3.5 buts"][i],
+  probabilite: [67.4, 66.6, 66.8, 66.5][i],
+  coteEstimee: [1.48, 1.5, 1.5, 1.5][i],
+  niveauConfiance: ["eleve", "moyen", "eleve", "moyen"][i],
   justification: `Justification du match ${i}`,
   vigilance: i === 0 ? "Rotation possible" : "",
   statsHome: { forme: "VVNVV" },
@@ -65,9 +66,11 @@ export const topPayload = (over: Partial<TopMatchesResponse> = {}): TopMatchesRe
   avertissement: "Cotes estimées (1 ÷ probabilité), sans marge de bookmaker : les cotes réelles proposées par un opérateur seront plus basses.",
   complet: true,
   donnees: { championnatsPrets: ["PL", "PD", "SA", "BL1", "FL1", "PPL", "DED", "BSA"] },
-  topMatches: [topEntry(0), topEntry(1), topEntry(2)],
-  coteTotale: "2.66",
-  probabiliteCombinee: 37.6,
+  topMatches: [topEntry(0), topEntry(1), topEntry(2), topEntry(3)],
+  coteTotale: "5.01",
+  probabiliteCombinee: 19.9,
+  objectifCote: 5,
+  objectifCoteAtteint: true,
   ia: { statut: "ok", modele: "claude-sonnet-5-5" },
   ...over,
 });
