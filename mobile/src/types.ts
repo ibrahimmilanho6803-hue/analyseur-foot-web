@@ -82,6 +82,12 @@ export interface AnalyzeResponse {
 
 export interface AutoCouponResponse {
   resultats?: ApiLeg[];
+  coteTotale?: string | number | null;
+  probabiliteCombinee?: number;
+  /** Cote totale visée par le serveur (5 par défaut) et résultat : null quand aucun pari n'a pu être chiffré. */
+  objectifCote?: number;
+  objectifCoteAtteint?: boolean | null;
+  message?: string;
 }
 
 /** Un match du « Top Matchs » (GET /api/top-matches). */
@@ -111,6 +117,9 @@ export interface TopMatchesResponse {
   topMatches?: TopMatch[];
   coteTotale?: string | number;
   probabiliteCombinee?: number;
+  /** Cote totale visée par le serveur (5 par défaut) et résultat ; absents d'un ancien serveur. */
+  objectifCote?: number;
+  objectifCoteAtteint?: boolean;
   avertissement?: string;
   avertissementDonnees?: string;
   message?: string;
@@ -125,6 +134,8 @@ export interface TopMatchesResponse {
 export interface TopMeta {
   coteTotale?: string | number;
   probabiliteCombinee?: number;
+  objectifCote?: number;
+  objectifCoteAtteint?: boolean;
   avertissement?: string;
   avertissementDonnees?: string;
   message?: string;
@@ -203,6 +214,8 @@ export interface Pronostic {
 export interface GenReport {
   added: number;
   problems: string[];
+  /** Explication quand la cote visée n'est pas atteinte (les matchs restent alors dans la liste). */
+  notice?: string;
 }
 
 export type TabKey = "top" | "build" | "gen" | "history";

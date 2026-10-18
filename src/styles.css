@@ -227,6 +227,7 @@ svg { flex: none; }
 .tile { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 14px; background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-md); }
 .tile__label { color: var(--chalk-dim); font-size: 12px; font-weight: 500; }
 .tile__value { font: 700 34px/1.1 var(--font-title); font-variant-numeric: tabular-nums; }
+.tile__hint { color: var(--chalk-dim); font-size: 12px; line-height: 1.4; }
 
 .empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 30px 12px; text-align: center; }
 .empty__icon { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 4px; background: var(--raised); border: 1px solid var(--line); border-radius: 50%; color: var(--chalk-dim); }

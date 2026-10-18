@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { callApi } from "./api";
 import { TYPES_PARI } from "./betTypes";
-import { awaitsReview, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, toEstimate } from "./estimates";
+import { awaitsReview, estimateProb, estimatesForChunk, fromTopMatch, mergeEstimates, targetShortfall, toEstimate } from "./estimates";
 import { matchKey, todayISO, uid } from "./format";
 import { useTeamCatalog } from "./useTeamCatalog";
 
@@ -41,6 +41,8 @@ export function useAnalyseur() {
   const [topLoading, setTopLoading] = useState(false);
   const [topError, setTopError] = useState(null);
   const [topAt, setTopAt] = useState(0);
+  // Pronostics ajoutés au coupon par la dernière génération « Auto » qui n'a pas atteint la cote visée : la génération suivante les remplace.
+  const unreachedAuto = useRef([]);
 
   const stats = useMemo(() => {
     const closed = pronostics.filter((p) => p.statut !== "en_attente");
@@ -139,6 +141,8 @@ export function useAnalyseur() {
       setTopMeta({
         coteTotale: data.coteTotale,
         probabiliteCombinee: data.probabiliteCombinee,
+        objectifCote: data.objectifCote,
+        objectifCoteAtteint: data.objectifCoteAtteint,
         avertissement: data.avertissement,
         avertissementDonnees: data.avertissementDonnees,
         message: data.message,
@@ -170,7 +174,9 @@ export function useAnalyseur() {
     setAiEstimates((prev) => ({ ...prev, [newId]: fromTopMatch(match) }));
   };
 
-  // Coupon automatique : le serveur choisit le pari le plus probable de chaque match saisi.
+  // Coupon automatique : le serveur choisit un pari par match de façon que la cote totale atteigne la cote visée (5), avec des paris aussi
+  // fiables que possible. Quand il n'y arrive pas (trop peu de matchs, par exemple), les matchs restent dans la liste pour qu'on puisse en
+  // ajouter ; la génération suivante remplace alors les pronostics ajoutés cette fois-ci au lieu de les doubler.
   const generateAutoCoupon = async () => {
     if (matchesToGenerate.length === 0 || genLoading) return;
     setGenLoading(true); setGenReport(null);
@@ -194,13 +200,20 @@ export function useAnalyseur() {
           problems.push(`${m.equipe1} vs ${m.equipe2} : ${toEstimate(r).message}`);
         }
       });
+      const unreached = Boolean(res) && res.objectifCoteAtteint === false;
       if (newDraft.length > 0) {
-        setDraft((d) => [...d, ...newDraft]);
-        setAiEstimates((prev) => ({ ...prev, ...newEstimates }));
-        setMatchesToGenerate((list) => list.filter((m) => !done.has(m.id)));
+        const replaced = new Set(unreachedAuto.current);
+        setDraft((d) => [...d.filter((x) => !replaced.has(x.id)), ...newDraft]);
+        setAiEstimates((prev) => {
+          const next = { ...prev };
+          replaced.forEach((id) => { delete next[id]; });
+          return { ...next, ...newEstimates };
+        });
+        if (!unreached) setMatchesToGenerate((list) => list.filter((m) => !done.has(m.id)));
+        unreachedAuto.current = unreached ? newDraft.map((x) => x.id) : [];
       }
-      if (problems.length === 0) setActiveTab("build");
-      else setGenReport({ added: newDraft.length, problems });
+      if (problems.length === 0 && !unreached) setActiveTab("build");
+      else setGenReport({ added: newDraft.length, problems, notice: unreached ? targetShortfall(res) : undefined });
     } catch (e) {
       setGenReport({ added: 0, problems: [e.message] });
     } finally {

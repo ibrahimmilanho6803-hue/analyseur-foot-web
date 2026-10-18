@@ -1,7 +1,7 @@
 import React from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import Feather from "@expo/vector-icons/Feather";
-import { asCross, asRefund, crossLeagueNote, refundNote } from "../estimates";
+import { asCross, asRefund, crossLeagueNote, refundNote, targetNote } from "../estimates";
 import { confidenceLabel, formatDate } from "../format";
 import type { Controller } from "../hooks/useAnalyseur";
 import { F, RD, SP, T, alpha, probTone } from "../theme";
@@ -77,7 +77,7 @@ export default function TopMatchsScreen({ c }: { c: Controller }) {
 
   return (
     <View>
-      <ScreenTitle icon="zap" title="Top 3 Matchs à venir" subtitle={subtitle} />
+      <ScreenTitle icon="zap" title="Top 4 Matchs à venir" subtitle={subtitle} />
 
       <View style={s.tools}>
         {!topLoading && (topAt > 0 || topError) ? <LinkBtn label="Actualiser" icon="refresh-cw" onPress={() => void c.fetchTopMatches()} color={T.gold} /> : null}
@@ -103,7 +103,7 @@ export default function TopMatchsScreen({ c }: { c: Controller }) {
       {!topLoading && topMatches.length > 0 && topMeta ? (
         <Card style={s.summary}>
           <View style={s.tiles}>
-            <Tile label="Cote combinée estimée">
+            <Tile label="Cote combinée estimée" hint={targetNote(topMeta.objectifCote, topMeta.objectifCoteAtteint)}>
               <Text style={[s.tileValue, { color: T.gold }]}>{topMeta.coteTotale}</Text>
             </Tile>
             <Tile label="Probabilité combinée">

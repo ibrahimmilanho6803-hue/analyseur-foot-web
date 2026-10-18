@@ -291,7 +291,7 @@ def onglet(noeuds, nom):
 
 
 ONGLETS = [
-    ("Top Matchs", r"Top 3 Matchs à venir", "top"),
+    ("Top Matchs", r"Top 4 Matchs à venir", "top"),
     ("Auto", r"Génération automatique", "auto"),
     ("Historique", r"Aucun coupon", "historique"),
     ("Mon coupon", r"Ajouter un match", "coupon"),

@@ -5,7 +5,7 @@ import type { Controller } from "../hooks/useAnalyseur";
 import { F, RD, SP, T, alpha } from "../theme";
 import { Btn, Card, IconBtn, LinkBtn, Note, SectionTitle, Txt } from "../ui";
 
-// Onglet « Auto » : on saisit des matchs, le serveur choisit le pari le plus fiable de chacun.
+// Onglet « Auto » : on saisit des matchs, le serveur choisit un pari par match pour atteindre la cote visée.
 export default function AutoScreen({ c }: { c: Controller }) {
   const { genForm, catalog, matchesToGenerate, genReport, genLoading } = c;
   const empty = matchesToGenerate.length === 0;
@@ -15,8 +15,8 @@ export default function AutoScreen({ c }: { c: Controller }) {
     <Card>
       <SectionTitle icon="cpu">Génération automatique</SectionTitle>
       <Txt style={s.intro}>
-        Saisissez des matchs : le serveur choisit pour chacun le pari le plus fiable, c'est-à-dire le plus probable, quelle que soit sa cote. L'équipe 1 reçoit, l'équipe 2 se déplace. Les deux clubs peuvent venir de championnats
-        différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
+        Saisissez au moins 3 matchs : le serveur choisit pour chacun un pari de façon que la cote totale du coupon atteigne 5, avec des paris aussi fiables que possible. L'équipe 1 reçoit, l'équipe 2 se déplace. Les deux clubs peuvent
+        venir de championnats différents (Ligue des champions, par exemple) : l'estimation est alors moins précise.
       </Txt>
 
       <TeamInput
@@ -70,6 +70,9 @@ export default function AutoScreen({ c }: { c: Controller }) {
               {problem}
             </Note>
           ))}
+          {genReport.notice ? (
+            <Note style={s.reportNote}>{genReport.notice}</Note>
+          ) : null}
         </View>
       ) : null}
 

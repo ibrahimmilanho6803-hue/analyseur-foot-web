@@ -9,15 +9,20 @@ afterEach(() => {
 });
 
 describe("onglet Top Matchs", () => {
-  test("affiche les 3 matchs, la cote combinée estimée et l'avertissement sur les cotes", async () => {
+  test("affiche les 4 matchs, la cote combinée estimée, la cote visée et l'avertissement sur les cotes", async () => {
     const calls = installFetch({ "GET /api/top-matches": () => ({ body: topPayload() }) });
     await openApp();
     await openTab("Top Matchs");
     await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getByText("Top 4 Matchs à venir")).toBeOnTheScreen();
     expect(screen.getByText("Real Madrid vs Getafe")).toBeOnTheScreen();
     expect(screen.getByText("Inter vs Torino")).toBeOnTheScreen();
-    expect(screen.getByText("78.4 %")).toBeOnTheScreen();
-    expect(screen.getByText("2.66")).toBeOnTheScreen();
+    expect(screen.getByText("Napoli vs Genoa")).toBeOnTheScreen();
+    expect(screen.getByText("67.4 %")).toBeOnTheScreen();
+    expect(screen.getByText("5.01")).toBeOnTheScreen(); // cote combinée
+    expect(screen.getByText("19.9 %")).toBeOnTheScreen(); // probabilité combinée
+    expect(screen.getByText("Cote visée : 5 ou plus (atteinte)")).toBeOnTheScreen();
+    expect(screen.getAllByRole("button", { name: "Ajouter ce pronostic" })).toHaveLength(4);
     expect(screen.getByText(/Cotes estimées \(1 ÷ probabilité\)/)).toBeOnTheScreen(); // avertissement envoyé par le serveur
     expect(screen.getByText(/Analyse de 8 championnats/)).toBeOnTheScreen();
     expect(calls.filter((c) => c.path === "/api/top-matches")).toHaveLength(1);
@@ -56,10 +61,10 @@ describe("onglet Top Matchs", () => {
     expect(screen.getByText(/Certains championnats sont encore en cours de chargement/)).toBeOnTheScreen();
   });
 
-  test("plus de limite de cote : un pari très probable à cote très basse est présenté tel quel", async () => {
+  test("l'application présente tel quel ce que le serveur choisit, sans rien filtrer", async () => {
     installFetch({
       "GET /api/top-matches": () => ({
-        body: topPayload({ topMatches: [topEntry(0, { meilleurPari: "Plus de 0.5 buts", probabilite: 97.2, coteEstimee: 1.03 })], coteTotale: "1.03", probabiliteCombinee: 97.2 }),
+        body: topPayload({ topMatches: [topEntry(0, { meilleurPari: "Plus de 0.5 buts", probabilite: 97.2, coteEstimee: 1.03 })], coteTotale: "1.03", probabiliteCombinee: 97.2, objectifCoteAtteint: false }),
       }),
     });
     await openApp();
@@ -70,14 +75,32 @@ describe("onglet Top Matchs", () => {
     expect(screen.getByText("Plus de 0.5 buts")).toBeOnTheScreen();
   });
 
-  test("un ancien serveur qui annonce encore un objectif de cote : l'application n'en parle plus", async () => {
-    const body = { ...topPayload({ topMatches: [topEntry(0)], coteTotale: "1.28", probabiliteCombinee: 78.4 }), objectifCote: 2.5, objectifCoteAtteint: false };
-    installFetch({ "GET /api/top-matches": () => ({ body }) });
+  test("cote visée non atteinte (trop peu de matchs) : le message du serveur et la ligne sous la cote le disent", async () => {
+    const message = "Seulement 2 matchs exploitables trouvés dans les 72 prochaines heures. La cote visée (5) n'est pas atteinte avec les matchs disponibles (cote totale : 3.12).";
+    installFetch({
+      "GET /api/top-matches": () => ({
+        body: topPayload({ topMatches: [topEntry(0), topEntry(1)], coteTotale: "3.12", probabiliteCombinee: 32, objectifCoteAtteint: false, message }),
+      }),
+    });
     await openApp();
     await openTab("Top Matchs");
     await screen.findByText("Arsenal vs Chelsea");
-    expect(screen.getByText("Cote combinée estimée")).toBeOnTheScreen();
-    expect(screen.queryByText(/objectif/i)).not.toBeOnTheScreen();
+    expect(screen.getByText(message)).toBeOnTheScreen();
+    expect(screen.getByText("3.12")).toBeOnTheScreen();
+    expect(screen.getByText("Cote visée : 5 ou plus (non atteinte)")).toBeOnTheScreen();
+  });
+
+  test("une cote visée décimale s'écrit avec la virgule ; un ancien serveur sans objectif n'affiche pas cette ligne", async () => {
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ objectifCote: 2.5 }) }) });
+    await openApp();
+    await openTab("Top Matchs");
+    await screen.findByText("Arsenal vs Chelsea");
+    expect(screen.getByText("Cote visée : 2,5 ou plus (atteinte)")).toBeOnTheScreen();
+    delete (globalThis as { fetch?: unknown }).fetch;
+    installFetch({ "GET /api/top-matches": () => ({ body: topPayload({ objectifCote: undefined, objectifCoteAtteint: undefined }) }) });
+    await fireEvent.press(button("Actualiser"));
+    await screen.findByText("Cote combinée estimée"); // le résumé revient quand la nouvelle réponse est arrivée
+    expect(screen.queryByText(/Cote visée/)).not.toBeOnTheScreen();
   });
 
   test("un pari à ligne entière : le remboursement est annoncé, et il suit le pari dans le coupon", async () => {
@@ -140,7 +163,7 @@ describe("onglet Top Matchs", () => {
     await fireEvent.press(screen.getAllByRole("button", { name: "Ajouter ce pronostic" })[0]);
     expect(button("Déjà dans le coupon")).toBeDisabled();
     await openTab("Mon coupon");
-    expect(screen.getAllByText("78 %").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("67 %").length).toBeGreaterThan(0);
     expect(screen.queryByText("Estimation indicative")).not.toBeOnTheScreen(); // l'analyse du serveur est déjà là
     expect(screen.queryByText(/pas d'analyse chiffrée/)).not.toBeOnTheScreen();
   });

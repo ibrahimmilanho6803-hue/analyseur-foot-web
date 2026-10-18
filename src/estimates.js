@@ -23,6 +23,25 @@ export function refundNote(refund) {
   return `Remboursé si ${refund.quand}${chance}.`;
 }
 
+// Cote totale visée par « Top Matchs » et « Auto », annoncée par le serveur (`objectifCote`) ; absente d'un ancien serveur.
+export function asTarget(raw) {
+  return typeof raw === "number" && Number.isFinite(raw) && raw > 1 ? raw : undefined;
+}
+
+// Ligne sous la cote combinée : « Cote visée : 5 ou plus (atteinte) ». Vide quand le serveur n'annonce pas d'objectif.
+export function targetNote(objectif, atteint) {
+  const target = asTarget(objectif);
+  if (target === undefined) return null;
+  const shown = String(Math.round(target * 100) / 100).replace(".", ",");
+  return `Cote visée : ${shown} ou plus${atteint === true ? " (atteinte)" : atteint === false ? " (non atteinte)" : ""}`;
+}
+
+// Texte montré quand « Auto » n'atteint pas la cote visée : le message du serveur (il dit pourquoi), puis ce qui se passe ensuite.
+export function targetShortfall(res) {
+  const message = res && typeof res.message === "string" ? res.message.trim() : "";
+  return `${message || "La cote visée n'est pas atteinte avec ces matchs."} Les matchs restent dans la liste : une nouvelle génération remplacera les pronostics que celle-ci vient d'ajouter à votre coupon.`;
+}
+
 // Avertissement à montrer à côté d'un pronostic entre clubs de championnats différents : le texte du serveur (il dit pourquoi
 // l'estimation est moins précise), ou à défaut une phrase générale.
 export function crossLeagueNote(cross) {
